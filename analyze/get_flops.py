@@ -1,3 +1,21 @@
+"""
+get_flops —— 模型 FLOPs / 参数量统计
+====================================
+用两种主流统计后端（结果一致，可交叉验证）计算网络的计算量与参数量：
+    - fvcore_flop_count    ：fvcore 的 flop_count（JIT trace 逐算子挂钩子）
+    - mmengine_flop_count  ：mmengine 的复杂度分析（同一套思路的 mm 实现）
+
+关键点：SelectiveScan 是自定义 CUDA 算子，统计器默认不认识，必须通过
+supported_ops 把它接到 selective_scan_flop_jit 钩子上，否则 Mamba 主干的
+计算量会被漏算；silu/neg/exp/flip 等逐元素或重排算子则显式忽略（与
+ConvNeXt/Swin 论文口径一致）。
+
+入口（__main__ 里用 if False/True 开关）：
+    vssm_flops  ：纯 VSSM 骨干在 224 输入下的 FLOPs/Params
+    mmseg_flops ：用 mmseg 配置跑分割整网（UPerNet + 骨干）的 FLOPs
+    mmdet_flops ：用 mmdet 配置跑检测整网（Mask R-CNN + 骨干）的 FLOPs
+                  （逐 batch 统计 100 张图取平均，因检测输入尺寸不定）
+"""
 import os
 
 import torch
@@ -7,6 +25,8 @@ from torch.nn.modules import Module
 from functools import partial
 from typing import Callable, Tuple, Union, Tuple, Union, Any
 
+# 动态导入工具：把指定目录临时插到 sys.path 前面，import 后再弹出，
+# 以便从仓库其他子目录（如 ../classification）按模块名导入
 def import_abspy(name="models", path="classification/"):
     import sys
     import importlib
@@ -17,6 +37,7 @@ def import_abspy(name="models", path="classification/"):
     sys.path.pop(0)
     return module
 
+# 导入 ../classification/models：模型构建函数 + SelectiveScan 的 FLOPs 统计钩子
 build = import_abspy(
     "models", 
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "../classification/"),
@@ -25,6 +46,11 @@ selective_scan_flop_jit: Callable = build.vmamba.selective_scan_flop_jit
 VSSM: nn.Module = build.vmamba.VSSM
 Backbone_VSSM: nn.Module = build.vmamba.Backbone_VSSM
 
+# 算子 → FLOPs 统计钩子 的映射表：
+#   - SelectiveScan* 是自定义 CUDA 算子，统计器不认识，接到
+#     selective_scan_flop_jit 才能正确计入 Mamba 主干的计算量（否则漏算）；
+#   - silu/neg/exp/flip 属于逐元素/重排算子，按惯例显式忽略（置 None），
+#     与 ConvNeXt/Swin 论文的统计口径保持一致。
 supported_ops={
     "aten::silu": None, # as relu is in _IGNORED_OPS
     "aten::neg": None, # as relu is in _IGNORED_OPS
@@ -36,6 +62,9 @@ supported_ops={
     "prim::PythonOp.SelectiveScan": selective_scan_flop_jit, # latter
 }
 
+# 统计后端一：mmengine 实现。内部改写自 mmengine.analysis，
+# 只保留 FLOPs+Params，去掉激活量统计；_get_model_complexity_info=True 时
+# 返回内部函数本身（mmdet_flops 里复用），否则直接对模型统计并打印
 def mmengine_flop_count(model: nn.Module = None, input_shape = (3, 224, 224), show_table=False, show_arch=False, _get_model_complexity_info=False):
     from mmengine.analysis.print_helper import is_tuple_of, FlopAnalyzer, ActivationAnalyzer, parameter_count, _format_size, complexity_stats_table, complexity_stats_str
     from mmengine.analysis.jit_analysis import _IGNORED_OPS
@@ -149,6 +178,8 @@ def mmengine_flop_count(model: nn.Module = None, input_shape = (3, 224, 224), sh
     #       'flops computation is correct.')
 
 
+# 统计后端二：fvcore 实现。input_shape 支持单边长/双边/三元/四元写法，
+# 统一补成 (1, C, H, W) 的伪输入再 trace。返回 (params, flops)
 def fvcore_flop_count(model: nn.Module, inputs=None, input_shape=(3, 224, 224), show_table=False, show_arch=False):
     from fvcore.nn.parameter_count import parameter_count as fvcore_parameter_count
     from fvcore.nn.flop_count import flop_count, FlopCountAnalysis, _DEFAULT_SUPPORTED_OPS
@@ -203,8 +234,11 @@ def fvcore_flop_count(model: nn.Module, inputs=None, input_shape=(3, 224, 224), 
 # ==============================
 
 
+# 构建纯 VSSM 骨干（去掉 norm/head/classifier，forward 只走 patch_embed + layers），
+# 用于"分类骨干本身"的 FLOPs 统计
 def build_model_vssm(depths=[2, 2, 9, 2], embed_dim=96):
     model = VSSM(depths=depths, dims=embed_dim, d_state=16, dt_rank="auto", ssm_ratio=2.0, mlp_ratio=0.0, downsample="v1")
+    # 用 partial 替换 forward：只跑 patch_embed + 4 个 stage，不进分类头
     def forward_backbone(self: VSSM, x):
         x = self.patch_embed(x)
         for layer in self.layers:
@@ -228,6 +262,8 @@ def build_model_vssm(depths=[2, 2, 9, 2], embed_dim=96):
     return model
     
 
+# 纯骨干统计入口：tiny/small/base 三个规格在 224 输入下的 FLOPs/Params，
+# core 传 "fvcore" 或 "mm..." 选择统计后端（两者结果一致）
 def vssm_flops(core="fvcore"):
     _flops_count = fvcore_flop_count
     if core.startswith("mm"):
@@ -239,6 +275,8 @@ def vssm_flops(core="fvcore"):
     # 4.46 + 22.1, 9.11 + 43.6, 15.2 + 75.2
 
 
+# 把 Backbone_VSSM 同时注册进 mmseg/mmdet 的 MODELS 注册表，
+# 之后 mmseg/mmdet 的配置文件里就能直接写 type='MM_VSSM' 引用本仓库骨干
 def mmdet_mmseg_vssm():
     from mmengine.model import BaseModule
     from mmdet.registry import MODELS as MODELS_MMDET
@@ -252,6 +290,8 @@ def mmdet_mmseg_vssm():
             Backbone_VSSM.__init__(self, *args, **kwargs)
 
 
+# 用 mmseg 配置构建"分割整网"（UPerNet 解码头 + 骨干）统计 FLOPs，
+# input_shape 用实际训练/评测的分割分辨率（如 512x2048）
 def mmseg_flops(config=None, input_shape=(3, 512, 2048)):
     from mmengine.config import Config
     from mmengine.runner import Runner
@@ -264,6 +304,9 @@ def mmseg_flops(config=None, input_shape=(3, 512, 2048)):
     fvcore_flop_count(model, input_shape=input_shape)
 
 
+# 用 mmdet 配置构建检测整网（Mask R-CNN + 骨干）统计 FLOPs。
+# 检测训练时输入尺寸随机（多尺度），所以取 val 集 100 张图逐张统计取平均；
+# 统计期间临时 chdir 到 detection/ 目录（配置里相对路径的数据根需要它）
 def mmdet_flops(config=None):
     from mmengine.config import Config
     from mmengine.runner import Runner
@@ -297,6 +340,8 @@ def mmdet_flops(config=None):
 
     
 if __name__ == '__main__':
+    # 用 if False/True 开关选择要跑的统计项；行尾注释是历史实测结果
+    #（格式：FLOPs + Params），供论文表格直接引用
     if False:
         print("fvcore flops count for vssm ====================", flush=True)
         vssm_flops()
@@ -307,7 +352,9 @@ if __name__ == '__main__':
     detpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../detection/configs")
 
     if True:
+        # 注册 MM_VSSM（后面 mmseg/mmdet 配置都要用到）
         mmdet_mmseg_vssm()
+        # ---- vssm（第一代 VMamba 结构）在分割任务上的整网统计 ----
         if False:
             mmseg_flops(config=f"{segpath}/upernet/upernet_r50_4xb4-160k_ade20k-512x512.py", input_shape=(3, 512, 2048)) # GFlops:  952.616667136 Params:  66516108
             mmseg_flops(config=f"{segpath}/upernet/upernet_r101_4xb4-160k_ade20k-512x512.py", input_shape=(3, 512, 2048)) # GFlops:  1030.4084234239997 Params:  85508236
@@ -320,6 +367,7 @@ if __name__ == '__main__':
             mmseg_flops(config=f"{segpath}/vssm/upernet_convnext_4xb4-160k_ade20k-640x640_small.py", input_shape=(3, 640, 2560)) # GFlops:  1606.538496 Params:  81877196
             mmseg_flops(config=f"{segpath}/vssm/upernet_vssm_4xb4-160k_ade20k-640x640_small.py", input_shape=(3, 640, 2560)) # GFlops:  1619.8110944 Params:  76070924
     
+        # ---- vssm（第一代）在检测任务上的整网统计 ----
         if False:
             mmdet_flops(config=f"{detpath}/vssm/mask_rcnn_vssm_fpn_coco_tiny.py") # 42.4M 262093532640.0
             mmdet_flops(config=f"{detpath}/vssm/mask_rcnn_vssm_fpn_coco_small.py") # 63.924M 357006236640.0
@@ -327,12 +375,14 @@ if __name__ == '__main__':
             mmdet_flops(config=f"{detpath}/mask_rcnn/mask-rcnn_r50_fpn_1x_coco.py") # 44.396M 260152304640.0
             mmdet_flops(config=f"{detpath}/mask_rcnn/mask-rcnn_r101_fpn_1x_coco.py") # 63.388M 336434160640.0
 
+        # ---- vssm1（第二代 VMamba 结构）在分割任务上的整网统计（当前启用）----
         if True:
             mmseg_flops(config=f"{segpath}/vssm1/upernet_vssm_4xb4-160k_ade20k-512x512_tiny.py", input_shape=(3, 512, 2048)) # GFlops:  947.7798358240001 Params:  62359340
             mmseg_flops(config=f"{segpath}/vssm1/upernet_vssm_4xb4-160k_ade20k-512x512_small.py", input_shape=(3, 512, 2048)) # GFlops:  1028.404888464 Params:  81801260
             mmseg_flops(config=f"{segpath}/vssm1/upernet_vssm_4xb4-160k_ade20k-512x512_base.py", input_shape=(3, 512, 2048)) # GFlops:  1170.3442882240001 Params:  122069292
             mmseg_flops(config=f"{segpath}/vssm1/upernet_vssm_4xb4-160k_ade20k-640x640_small.py", input_shape=(3, 640, 2560)) # GFlops:  1606.8682596 Params:  81801260
     
+        # ---- vssm1（第二代）在检测任务上的整网统计 ----
         if True:
             mmdet_flops(config=f"{detpath}/vssm1/mask_rcnn_vssm_fpn_coco_tiny.py") # 50.212M 270186348640.0
             mmdet_flops(config=f"{detpath}/vssm1/mask_rcnn_vssm_fpn_coco_small.py") # 69.654M 348921708640.0

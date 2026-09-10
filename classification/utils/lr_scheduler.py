@@ -5,6 +5,13 @@
 # Written by Ze Liu
 # --------------------------------------------------------
 
+"""
+lr_scheduler.py —— 学习率调度器（timm Scheduler 封装 + 自定义线性/多步）
+========================================================================
+build_scheduler(config, optimizer, n_iter_per_epoch)：按配置名构建
+  cosine（默认）/ linear / step / multistep 之一，
+  内部把 epoch 转成 step（n_iter_per_epoch），支持 warmup。
+"""
 import bisect
 
 import torch
@@ -14,6 +21,7 @@ from timm.scheduler.scheduler import Scheduler
 
 
 def build_scheduler(config, optimizer, n_iter_per_epoch):
+    """【中文】按 config.TRAIN.LR_SCHEDULER.NAME 构建调度器（step 维度：epochs×iters）。"""
     num_steps = int(config.TRAIN.EPOCHS * n_iter_per_epoch)
     warmup_steps = int(config.TRAIN.WARMUP_EPOCHS * n_iter_per_epoch)
     decay_steps = int(config.TRAIN.LR_SCHEDULER.DECAY_EPOCHS * n_iter_per_epoch)
@@ -64,6 +72,8 @@ def build_scheduler(config, optimizer, n_iter_per_epoch):
 
 
 class LinearLRScheduler(Scheduler):
+    """线性衰减 + warmup 的调度器：warmup 段线性从 warmup_lr_init 升到 base_lr，
+    之后线性衰减到 base_lr×lr_min_rate。支持按 epoch 或按 update 查询。"""
     def __init__(self,
                  optimizer: torch.optim.Optimizer,
                  t_initial: int,
@@ -88,12 +98,14 @@ class LinearLRScheduler(Scheduler):
         self.warmup_lr_init = warmup_lr_init
         self.t_in_epochs = t_in_epochs
         if self.warmup_t:
+            # 预热步长：每个参数组从 warmup_lr_init 升到 base_lr 的每步增量
             self.warmup_steps = [(v - warmup_lr_init) / self.warmup_t for v in self.base_values]
             super().update_groups(self.warmup_lr_init)
         else:
             self.warmup_steps = [1 for _ in self.base_values]
 
     def _get_lr(self, t):
+        # 预热段：线性上升；之后线性衰减至 lr_min_rate
         if t < self.warmup_t:
             lrs = [self.warmup_lr_init + t * s for s in self.warmup_steps]
         else:
@@ -103,12 +115,14 @@ class LinearLRScheduler(Scheduler):
         return lrs
 
     def get_epoch_values(self, epoch: int):
+        # 按 epoch 查询（t_in_epochs=True 时生效）
         if self.t_in_epochs:
             return self._get_lr(epoch)
         else:
             return None
 
     def get_update_values(self, num_updates: int):
+        # 按步数查询（t_in_epochs=False 时生效）
         if not self.t_in_epochs:
             return self._get_lr(num_updates)
         else:
@@ -116,6 +130,7 @@ class LinearLRScheduler(Scheduler):
 
 
 class MultiStepLRScheduler(Scheduler):
+    """多步衰减 + warmup 的调度器：里程碑处学习率乘 gamma。"""
     def __init__(self, optimizer: torch.optim.Optimizer, milestones, gamma=0.1, warmup_t=0, warmup_lr_init=0, t_in_epochs=True) -> None:
         super().__init__(optimizer, param_group_field="lr")
         
@@ -133,6 +148,7 @@ class MultiStepLRScheduler(Scheduler):
         assert self.warmup_t <= min(self.milestones)
     
     def _get_lr(self, t):
+        # 预热段线性上升；之后每过一个 milestone 乘 alpha 衰减
         if t < self.warmup_t:
             lrs = [self.warmup_lr_init + t * s for s in self.warmup_steps]
         else:

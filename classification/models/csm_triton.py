@@ -1,4 +1,14 @@
 
+"""
+csm_triton.py —— Triton 实现的 4 方向 CrossScan / CrossMerge
+==============================================================
+【角色】vmamba.py 默认 import 本文件提供的 CrossScanTriton / CrossMergeTriton /
+CrossScanTriton1b1（比 pytorch 版快约 2 倍）。它们是 torch.autograd.Function 封装，
+底层的 triton_cross_scan / triton_cross_merge / *_1b1 是 Triton kernel。
+
+【与 Mamba-FCS 的关系】变化检测训练时 SS2D 前向自动使用这些 Triton 算子
+（除非禁用）；无 Triton 环境时回退 pytorch 实现（见 vmamba.py 的 try/except）。
+"""
 # triton cross scan, 2x speed than pytorch implementation =========================
 import torch
 import triton
@@ -6,6 +16,8 @@ import triton.language as tl
 
 @triton.jit
 def triton_cross_scan(
+    # Triton kernel：把 (B,C,H,W) 的每个像素一次性拷贝到 4 个方向的输出位置。
+    # 方向排列与 pytorch CrossScan 一致：0=行正向、1=列正向、2=行反向、3=列反向。
     x, # (B, C, H, W)
     y, # (B, 4, C, H, W)
     BC: tl.constexpr,
@@ -43,6 +55,7 @@ def triton_cross_scan(
 
 @triton.jit
 def triton_cross_merge(
+    # Triton kernel：cross_scan 的逆操作，把 4 方向结果求和（反向时为 scatter）。
     x, # (B, C, H, W)
     y, # (B, 4, C, H, W)
     BC: tl.constexpr,
@@ -80,6 +93,7 @@ def triton_cross_merge(
 
 @triton.jit
 def triton_cross_scan_1b1(
+    # Triton kernel：1b1 变体 —— 输入已经是 4 路（B,4,C,H,W），做逐路方向展开。
     x, # (B, C, H, W)
     y, # (B, 4, C, H, W)
     BC: tl.constexpr,
@@ -119,6 +133,7 @@ def triton_cross_scan_1b1(
 
 @triton.jit
 def triton_cross_merge_1b1(
+    # Triton kernel：1b1 变体合并。
     x, # (B, C, H, W)
     y, # (B, 4, C, H, W)
     BC: tl.constexpr,
@@ -158,6 +173,7 @@ def triton_cross_merge_1b1(
 
 
 class CrossScanTriton(torch.autograd.Function):
+    """Triton 版 CrossScan：4 方向展开（前向），合并（反向）。"""
     @staticmethod
     def forward(ctx, x: torch.Tensor):
         B, C, H, W = x.shape
@@ -183,6 +199,7 @@ class CrossScanTriton(torch.autograd.Function):
 
 
 class CrossMergeTriton(torch.autograd.Function):
+    """Triton 版 CrossMerge：4 方向合并（前向），展开（反向）。"""
     @staticmethod
     def forward(ctx, y: torch.Tensor):
         B, K, C, H, W = y.shape
@@ -208,6 +225,7 @@ class CrossMergeTriton(torch.autograd.Function):
 
 
 class CrossScanTriton1b1(torch.autograd.Function):
+    """Triton 版 1b1 CrossScan：输入已是 4 路时使用。"""
     @staticmethod
     def forward(ctx, x: torch.Tensor):
         B, K, C, H, W = x.shape

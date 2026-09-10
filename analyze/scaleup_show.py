@@ -1,8 +1,23 @@
+"""
+scaleup_show —— 缩放实验结果绘图（配套 get_scaleup.py 的输出）
+==============================================================
+回读 get_scaleup.py 产生的两类日志并画图：
+    readlog      ：解析 *_scale.log —— 成对的 "starting loop: img_size N" 与
+                   "* Acc@1 x Acc@5 y" 行 → (分辨率, acc1, acc5) 序列，
+                   按分辨率升序排列，用于画"精度 vs 输入分辨率"曲线；
+    readlogflops ：解析 flops.log —— 按 "= tiny/small/base =" 分组，
+                   每行 "= model x img_size y params z flops w" 解析成
+                   各模型 (size, params, flops) 列表。
+
+注意：绘图逻辑直接写在模块顶层，import 本文件即会读日志并画图；
+日志目录写死为 analyze/show/scaleup.log/（历史路径，按需修改）。
+"""
 import torch
 import os
 from matplotlib import pyplot as plot
 
 
+# 通用折线图绘制（与 get_loss.draw_fig 同款，少了截断保护）
 def draw_fig(data: list, xlim=(0, 301), ylim=(68, 84), xstep=None, ystep=None, save_path="./show.jpg"):
     assert isinstance(data[0], dict)
     fig, ax = plot.subplots(dpi=300, figsize=(24, 8))
@@ -28,6 +43,8 @@ def draw_fig(data: list, xlim=(0, 301), ylim=(68, 84), xstep=None, ystep=None, s
     plot.savefig(save_path)
 
 
+# 解析单个模型的缩放验证日志：只保留含 img_size / * Acc 的行，
+# 两者成对出现（前一行给分辨率，后一行给精度），排序后拆成三条序列
 def readlog(file=None):
     log = open(file, "r").readlines()
     log = [d.strip(" ").strip("\n") for d in log if ("img_size" in d) or ("* Acc" in d)]
@@ -47,6 +64,9 @@ def readlog(file=None):
     return _log, x_axis, acc1, acc5
 
 
+# 解析 main_flops 输出的复杂度日志：按 tiny/small/base 三个规模分桶，
+# 每行 "= model x img_size y params z flops w" 抽出 (size, params, flops)
+# 挂到对应模型名下；最终打印汇总（_log 组装后未返回，仅调试用）
 def readlogflops(file=None):
     series = dict(tiny=dict(), small=dict(), base=dict())
     log = open(file, "r").readlines()
@@ -85,8 +105,11 @@ def readlogflops(file=None):
     return series
 
 
+# ---------- 模块顶层：读入全部模型的缩放日志（import 即执行） ----------
 scalepath = "analyze/show/scaleup.log"
+# flops 曲线数据（readlogflops 只打印汇总，画图用的是下面的 acc 曲线）
 readlogflops(f"{scalepath}/flops.log")
+# tiny 规模组（deit_small/resnet50 按 tiny 档对比）
 vssm_tiny = readlog(f"{scalepath}/vssmtiny_scale.log")
 swin_tiny = readlog(f"{scalepath}/swintiny_scale.log")
 convnext_tiny = readlog(f"{scalepath}/convnexttiny_scale.log")
@@ -121,6 +144,8 @@ print("swin_base:", swin_base)
 print("convnext_base:", convnext_base)
 print("replknet_31B:", replknet_31B)
 
+# 画"精度 vs 输入分辨率"总图：竖线 x=224 标出所有模型的训练分辨率，
+# 224 右侧即各模型"零微调直接上更大分辨率"的表现
 if True:
     draw_fig([
         dict(x=[224, 224], y=[0, 85], label="where all the models are trained"),

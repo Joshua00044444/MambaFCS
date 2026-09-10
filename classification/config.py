@@ -1,3 +1,16 @@
+"""config.py —— 全局配置（yacs CfgNode）
+=========================================
+继承自 Swin Transformer 的配置体系，所有训练/模型/数据/AUG 相关超参
+都有默认值，再由 CLI 参数或 YAML 文件覆盖（get_config(args)）。
+
+分类：
+  DATA           数据路径/尺寸/增强
+  MODEL          （TYPE/NAME/PATCH_SIZE/…与 VSSM 详细信息）
+  TRAIN          训练、优化器、LR 调度
+  AUG            mixup/cutmix/随机擦除等
+  TEST           中心裁剪/采样器
+  其他           输出目录/打印频率/随机种子/eval 模式
+"""
 # --------------------------------------------------------
 # Modified by Mzero
 # --------------------------------------------------------
@@ -213,6 +226,7 @@ _C.FUSED_LAYERNORM = False
 
 
 def _update_config_from_file(config, cfg_file):
+    """递归加载 YAML 配置（支持 BASE 继承），合并到 CfgNode。"""
     config.defrost()
     with open(cfg_file, 'r') as f:
         yaml_cfg = yaml.load(f, Loader=yaml.FullLoader)
@@ -228,6 +242,7 @@ def _update_config_from_file(config, cfg_file):
 
 
 def update_config(config, args):
+    """把命令行参数合并进配置：覆盖 → 输出目录拼接 <output>/<model>/<tag>。"""
     _update_config_from_file(config, args.cfg)
 
     config.defrost()
@@ -286,6 +301,7 @@ def update_config(config, args):
 
 def get_config(args):
     """Get a yacs CfgNode object with default values."""
+    # 克隆默认配置（避免污染全局默认值），再应用 cfg 文件与 CLI 覆盖
     # Return a clone so that the defaults will not be altered
     # This is for the "local variable" use pattern
     config = _C.clone()

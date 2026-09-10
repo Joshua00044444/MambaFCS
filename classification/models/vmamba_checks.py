@@ -1,3 +1,17 @@
+"""
+vmamba_checks.py —— VMamba 实现正确性检查脚本（开发调试用）
+============================================================
+CHECKS 里是一组"数值等价性/性能"验证用例：
+  check_vssm_equals_vmambadp    —— 新 VSSM 与旧版 VMamba2Dp 输出对齐
+  check_vssm1_equals_vssm       —— 不同 forward_type 与旧实现的等价
+  check_vssm1_ssoflex_equals_mambassm —— SSOflex 与 Mamba SSM 数值等价
+  check_csm_triton / check_einsum —— Triton 版 CrossScan 与 pytorch 版一致
+  check_vssblock / check_ln2d / check_linear_2d / check_gmlp / check_channel_first
+                                —— 各基础模块 sanity check
+  check_profile                 —— torch.profiler 性能剖分
+  load22kto1k                   —— 22K → 1K 标签映射
+说明：Mamba-FCS 运行不依赖本文件；仅 VMamba 原仓库开发调试用。
+"""
 import os
 import time
 import math
@@ -17,6 +31,7 @@ from vmamba import CrossScanTriton, CrossMergeTriton, CrossScanTriton1b1
 from vmamba import VSSM, PatchMerging2D, Mlp, gMlp, LayerNorm2d, VSSBlock
 
 class CHECKS:
+    """VMamba 实现检查脚本集合（详见文件头说明）。"""
     def check_vssm_equals_vmambadp():
         try:
             from _ignore.vmamba.vmamba_bak1 import VMamba2Dp

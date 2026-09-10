@@ -5,6 +5,12 @@
 # Written by Zhenda Xie
 # --------------------------------------------------------
 
+"""
+data_simmim_ft.py —— SimMIM 微调数据管线（本仓库未使用）
+===========================================================
+【角色】原仓库用于 SimMIM 预训练后的下游微调；结构基本与 build.py 相同
+（train/val 拆分 + mixup/cutmix），仅数据集不支持 zip 模式。Mamba-FCS 不依赖。
+"""
 import os
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
@@ -16,6 +22,7 @@ from timm.data.transforms import _pil_interp
 
 
 def build_loader_finetune(config):
+    """【中文】构建微调用 train/val 加载器 + mixup 回调。"""
     config.defrost()
     dataset_train, config.MODEL.NUM_CLASSES = build_dataset(is_train=True, config=config)
     config.freeze()
@@ -59,6 +66,7 @@ def build_loader_finetune(config):
 
 
 def build_dataset(is_train, config):
+    """【中文】ImageNet 文件夹数据集（train/val 前缀）。"""
     transform = build_transform(is_train, config)
     
     if config.DATA.DATASET == 'imagenet':
@@ -73,6 +81,7 @@ def build_dataset(is_train, config):
 
 
 def build_transform(is_train, config):
+    """【中文】训练/验证变换（与 build.py 一致）。"""
     resize_im = config.DATA.IMG_SIZE > 32
     if is_train:
         # this should always dispatch to transforms_imagenet_train

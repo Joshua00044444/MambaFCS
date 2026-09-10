@@ -1,8 +1,32 @@
+"""
+get_loss —— 训练日志解析 + 精度/损失曲线绘制
+============================================
+从三种格式的训练日志里抽取出 acc1/acc5 与 loss 序列，再画成对比曲线：
+
+    get_acc_mmpretrain / get_loss_mmpretrain ：mmengine(mmpretrain) 的 json 日志
+    get_acc_swin       / get_loss_swin       ：timm(Swin/VSSM) 风格的 txt 日志
+    get_acc_convnext   / get_loss_convnext   ：ConvNeXt 官方代码输出的日志
+
+x 轴统一折算成"epoch"单位：x1e 是一个 epoch 内的相对进度（0~1），
+按"每个 epoch 内取 x1e、跨 epoch 加上 epoch 序号"的方式平铺，使不同
+日志粒度（每次 iter / 每 10 iter / 每 epoch）的曲线能在同一坐标系对比。
+
+绘制时每条曲线用 dict(x=..., y=..., label=...) 传入 draw_fig；
+各 main_* 函数对应一组实验（vssm / vssmd / heat / vssm1 ...），
+日志路径写死在函数里，按需解开 __main__ 中的注释运行。
+
+注意：日志文件路径很多指向原作者集群的绝对路径（/home/...、../../logs），
+在本机运行前需要先改成自己的路径。
+"""
+
 # Analyze log ==================================
 import os
 import torch
 
 def get_acc_convnext(f: list):
+    """解析 ConvNeXt 日志的验证精度。
+    其格式是"* Acc@1 ..."行 + 下一行 "Accuracy of the model EMA on ..."，
+    借助下一行区分实时权重与 EMA 权重两组精度。"""
     if isinstance(f, str):
         f = open(f, "r").readlines()
 
@@ -23,6 +47,9 @@ def get_acc_convnext(f: list):
 
 
 def get_loss_convnext(f: list, x1e=torch.tensor(list(range(0, 625, 10)) + [624]).view(1, -1) / 625, scale=1):
+    """解析 ConvNeXt 日志的训练 loss。x1e=一个 epoch 内的相对进度刻度
+    （ConvNeXT 每 epoch 625 个 iter，每 10 iter 打一行）；scale 用于多卡
+    求和 loss 的归一化。返回 (x轴[epoch单位], 逐iter loss, epoch均值 loss)。"""
     if isinstance(f, str):
         f = open(f, "r").readlines()
 
@@ -34,6 +61,8 @@ def get_loss_convnext(f: list, x1e=torch.tensor(list(range(0, 625, 10)) + [624])
             losses.append(float(l[0]))
             avglosses.append(float(l[1].split(")")[0].strip("()")))
 
+    # 把"epoch 内相对进度"x1e 平铺成绝对 epoch 坐标：先纵向堆叠 ceil(N/每epoch行数) 份，
+    # 再每行加上 epoch 序号，最后截断成与 loss 点数一致的 x 轴
     x = x1e
     x = x.repeat(len(losses) // x.shape[1] + 1, 1)
     x = x + torch.arange(0, x.shape[0]).view(-1, 1)
@@ -47,6 +76,9 @@ def get_loss_convnext(f: list, x1e=torch.tensor(list(range(0, 625, 10)) + [624])
 
 
 def get_acc_swin(f: list, split_ema=False):
+    """解析 timm 风格日志（"INFO... * Acc@1 x Acc@5 y"）的验证精度。
+    split_ema=True 时日志里 EMA/非 EMA 交替出现（奇偶行各为一组），
+    按下标奇偶拆成 emaaccs / accs 两条曲线。"""
     if isinstance(f, str):
         f = open(f, "r").readlines()
 
@@ -67,6 +99,9 @@ def get_acc_swin(f: list, split_ema=False):
 
 
 def get_loss_swin(f: list, x1e=torch.tensor(list(range(0, 1253, 10))).view(1, -1) / 1253, scale=1):
+    """解析 timm 风格日志（"Train: [... loss: x (y)"）的训练 loss。
+    1253 = ImageNet 每 epoch 的 iter 数（除以卡数后的单卡步数）。
+    返回 (x轴[epoch单位], 逐刻度 loss, epoch内滑动均值 loss)。"""
     if isinstance(f, str):
         f = open(f, "r").readlines()
 
@@ -78,6 +113,8 @@ def get_loss_swin(f: list, x1e=torch.tensor(list(range(0, 1253, 10))).view(1, -1
             losses.append(float(l[0]))
             avglosses.append(float(l[1].split(")")[0].strip("()")))
 
+    # 把"epoch 内相对进度"x1e 平铺成绝对 epoch 坐标：先纵向堆叠 ceil(N/每epoch行数) 份，
+    # 再每行加上 epoch 序号，最后截断成与 loss 点数一致的 x 轴
     x = x1e
     x = x.repeat(len(losses) // x.shape[1] + 1, 1)
     x = x + torch.arange(0, x.shape[0]).view(-1, 1)
@@ -91,6 +128,8 @@ def get_loss_swin(f: list, x1e=torch.tensor(list(range(0, 1253, 10))).view(1, -1
 
 
 def get_acc_mmpretrain(f: list):
+    """解析 mmengine json 日志的 "accuracy_top-1/top-5" 键值（验证精度）。
+    mmpretrain 每 10 个 epoch 验证一次，x 轴直接构造 10,20,30... 序列。"""
     if isinstance(f, str):
         f = open(f, "r").readlines()
 
@@ -108,6 +147,9 @@ def get_acc_mmpretrain(f: list):
 
 
 def get_loss_mmpretrain(f: list, x1e=torch.tensor(list(range(100, 1201, 100))).view(1, -1) / 1201, scale=1):
+    """解析 mmengine json 日志的训练 loss（每 100 iter 记一条）。
+    1201 = 每 epoch 的 iter 数；mm 日志只有逐刻度 loss，无均值列，
+    所以 avglosses 恒为 None，返回时与 swin/convnext 版本的返回顺序对齐。"""
     if isinstance(f, str):
         f = open(f, "r").readlines()
 
@@ -117,6 +159,8 @@ def get_loss_mmpretrain(f: list, x1e=torch.tensor(list(range(100, 1201, 100))).v
             line = line.split("loss")[1].split(",")[0].split(" ")[-1] # 6.95273
             losses.append(float(line))
 
+    # 把"epoch 内相对进度"x1e 平铺成绝对 epoch 坐标：先纵向堆叠 ceil(N/每epoch行数) 份，
+    # 再每行加上 epoch 序号，最后截断成与 loss 点数一致的 x 轴
     x = x1e
     x = x.repeat(len(losses) // x.shape[1] + 1, 1)
     x = x + torch.arange(0, x.shape[0]).view(-1, 1)
@@ -130,6 +174,8 @@ def get_loss_mmpretrain(f: list, x1e=torch.tensor(list(range(100, 1201, 100))).v
 
 
 def linefit(xaxis, yaxis, fit_range=None, out_range=None):
+    """最小二乘一次拟合：在 fit_range（epoch 区间）内对曲线做线性拟合，
+    再把拟合直线延拓画到 out_range 上，用于观察/外推精度趋势。"""
     import numpy as np
     if fit_range is not None:
         # asset xaxis increases
@@ -154,6 +200,8 @@ def linefit(xaxis, yaxis, fit_range=None, out_range=None):
 
 
 def draw_fig(data: list, xlim=(0, 301), ylim=(68, 84), xstep=None,ystep=None, save_path="./show.jpg"):
+    """通用折线图绘制：data 为若干 dict(x=横轴, y=纵轴, label=图例)；
+    xstep/ystep 给定时按该步长生成坐标刻度，输出 300dpi 的 jpg。"""
     assert isinstance(data[0], dict)
     from matplotlib import pyplot as plot
     fig, ax = plot.subplots(dpi=300, figsize=(24, 8))
@@ -178,11 +226,13 @@ def draw_fig(data: list, xlim=(0, 301), ylim=(68, 84), xstep=None,ystep=None, sa
 
 # =====================================
 
+# 实验组一：VSSM（第一代，日志来自 modelarts 集群 + ../../logs 下的对照日志）
 def main_vssm_():
     logpath = os.path.join(os.path.dirname(__file__), "../../logs")
     showpath = os.path.join(os.path.dirname(__file__), "./show/log")
     
     # baseline ===
+    # 对照组：Swin 官方 300e 日志（mmpretrain json 格式）+ ConvNeXt 官方日志
     swin_tiny = f"{logpath}/swin_tiny_224_b16x64_300e_imagenet_20210616_090925.json"
     swin_small = f"{logpath}/swin_small_224_b16x64_300e_imagenet_20210615_110219.json"
     swin_base = f"{logpath}/swin_base_224_b16x64_300e_imagenet_20210616_190742.json"
@@ -246,6 +296,8 @@ def main_vssm_():
     vssmbasedrop06 = dict(xaxis=x, accs=accs, emaaccs=emaaccs, loss_xaxis=lx, losses=losses, avglosses=avglosses)
 
     # droppath + 2292 =======================================================
+    # 用 vssmsmall 在 100~300 epoch 段拟合直线并外推到 60~300，
+    # 观察训练趋势（画图时默认注释掉）
     fit_vssmbase = linefit(vssmsmall['xaxis'], vssmsmall['accs']['acc1'], fit_range=[100, 300], out_range=[60, 300])
 
     if True:
@@ -329,6 +381,7 @@ def main_vssm_():
         ], xlim=(10, 300), ylim=(2,5), save_path=f"{showpath}/loss_vssmd.jpg")
 
 
+# 实验组二：HEAT 模型（对照 Swin baseline，日志在原作者集群路径）
 def main_heat_():
     logpath = os.path.join(os.path.dirname(__file__), "../../logs")
     showpath = os.path.join(os.path.dirname(__file__), "./show/log")
@@ -400,6 +453,7 @@ def main_heat_():
         ], xlim=(10, 300), ylim=(2,5), save_path=f"{showpath}/loss_heat.jpg")
 
 
+# 实验组三：vit_heat 的两个 drop_path 变体（d005 / d01）对比
 def main_heatwzz():
     logpath = os.path.join(os.path.dirname(__file__), "../../logs")
     showpath = os.path.join(os.path.dirname(__file__), "./show/log")
@@ -464,6 +518,8 @@ def main_heatwzz():
 
 
 # =====================================
+# 下面四个 main_* 是"精简版"：日志集中在 ../../ckpts/private/classification/<模型名>/
+# 下，按 ti/sm/ba... 简称成批解析后画在同一张图里（结构同上面的详细版）
 def main_vssm():
     results = {}
     logpath = os.path.join(os.path.dirname(__file__), "../../ckpts/private/classification/vssm/")
@@ -548,6 +604,8 @@ def main_heat():
     ], xlim=(10, 300), ylim=(2,5), save_path=f"{showpath}/loss.jpg")
     
 
+# vssm1（第二代）tiny 的消融实验组：files 里大量注释行是历次实验编号，
+# 解开对应行即可把该次实验画进对比图
 def main_vssm1():
     results = {}
     logpath = os.path.join(os.path.dirname(__file__), "../../ckpts/private/classification/vssm1/")
@@ -607,6 +665,7 @@ def main_vssm1():
 
 
 if __name__ == "__main__":
+    # 按需解开注释运行对应实验组（当前启用 vssm1 消融组）
     ...
     # main_vssm()
     # main_vssmd()

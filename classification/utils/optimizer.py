@@ -7,6 +7,13 @@
 # Written by Ze Liu
 # --------------------------------------------------------
 
+"""
+optimizer.py —— 优化器构建（含归一化层不衰减、层衰减等）
+==========================================================
+build_optimizer：按配置构建 SGD / AdamW，并默认把 1 维参数（norm/bias）
+排除在 weight decay 之外；build_optimizer_swimmim（含 layer decay）为
+原仓库 microsoft/SimMIM 的遗留代码（本仓库未使用）。
+"""
 from functools import partial
 from torch import optim as optim
 
@@ -14,10 +21,12 @@ from torch import optim as optim
 def build_optimizer(config, model, logger, **kwargs):
     """
     Build optimizer, set weight decay of normalization to 0 by default.
+    【中文】构建优化器：bias/norm 不加权重衰减，其余参数按配置衰减。
     """
     logger.info(f"==============> building optimizer {config.TRAIN.OPTIMIZER.NAME}....................")
     skip = {}
     skip_keywords = {}
+    # 主干如定义了 no_weight_decay / no_weight_decay_keywords 就纳入跳过名单
     if hasattr(model, 'no_weight_decay'):
         skip = model.no_weight_decay()
     if hasattr(model, 'no_weight_decay_keywords'):
@@ -40,6 +49,8 @@ def build_optimizer(config, model, logger, **kwargs):
 
 
 def set_weight_decay(model, skip_list=(), skip_keywords=()):
+    """【中文】划分 has_decay / no_decay 两组参数：
+    一维参数（LayerNorm weight 等）、bias、跳过名单与关键字名单均不衰减。"""
     has_decay = []
     no_decay = []
     no_decay_names = []
@@ -59,6 +70,7 @@ def set_weight_decay(model, skip_list=(), skip_keywords=()):
 
 
 def check_keywords_in_name(name, keywords=()):
+    """【中文】判断参数名是否命中关键字名单（用于跳过特定层的衰减）。"""
     isin = False
     for keyword in keywords:
         if keyword in name:
@@ -68,10 +80,12 @@ def check_keywords_in_name(name, keywords=()):
 
 # ==========================
 # for mim, currently not used, and may have bugs...
+# 以下为 SimMIM 预训练/微调遗留的优化器构建（含 layer decay），未使用
 
 def build_optimizer_swimmim(config, model, logger, simmim=True, is_pretrain=False):
     """
     Build optimizer, set weight decay of normalization to 0 by default.
+    【中文】SimMIM 版：is_pretrain 用 get_pretrain_param_groups，否则按层衰减建组。
     """
     skip = {}
     skip_keywords = {}
@@ -103,6 +117,7 @@ def build_optimizer_swimmim(config, model, logger, simmim=True, is_pretrain=Fals
 
 
 def get_pretrain_param_groups(model, skip_list=(), skip_keywords=()):
+    """【中文】SimMIM 预训练参数划分（与 set_weight_decay 相同逻辑，独立实现）。"""
     has_decay = []
     no_decay = []
     has_decay_name = []
@@ -123,6 +138,7 @@ def get_pretrain_param_groups(model, skip_list=(), skip_keywords=()):
 
 
 def get_swin_layer(name, num_layers, depths):
+    """【中文】按参数名定位其参与层（Swin 结构），用于微调 layer decay。"""
     if name in ("mask_token"):
         return 0
     elif name.startswith("patch_embed"):
@@ -139,6 +155,7 @@ def get_swin_layer(name, num_layers, depths):
 
 
 def get_finetune_param_groups(model, lr, weight_decay, get_layer_func, scales, skip_list=(), skip_keywords=()):
+    """【中文】微调参数分组：按（层×decay/no_decay）建组，每层学习率 = lr×scale。"""
     parameter_group_names = {}
     parameter_group_vars = {}
 

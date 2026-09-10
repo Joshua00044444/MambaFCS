@@ -1,3 +1,9 @@
+"""
+build.py —— ImageNet 数据加载器（普通/zip 两种模式）
+=====================================================
+【角色】原 VMamba 分类预训练使用；构建 train/val 数据、采样器、
+mixup/cutmix；Mamba-FCS 的检测数据集不走这里（它用自己的 SemanticChangeDetectionDatset）。
+"""
 # --------------------------------------------------------
 # Swin Transformer
 # Copyright (c) 2021 Microsoft
@@ -23,6 +29,7 @@ try:
 
 
     def _pil_interp(method):
+        # 把字符串插值名映射到 torchvision InterpolationMode
         if method == 'bicubic':
             return InterpolationMode.BICUBIC
         elif method == 'lanczos':
@@ -42,6 +49,8 @@ except:
 
 
 def build_loader(config):
+    """构建训练/验证数据加载器 + mixup 回调。
+    注意：返回 5 元组（dataset_train, dataset_val, loader_train, loader_val, mixup_fn）。"""
     config.defrost()
     dataset_train, config.MODEL.NUM_CLASSES = build_dataset(is_train=True, config=config)
     config.freeze()
@@ -96,6 +105,7 @@ def build_loader(config):
 
 
 def build_dataset(is_train, config):
+    """构建数据集：imagenet（文件夹/zip 模式）或 imagenet22K，返回 (dataset, 类别数)。"""
     transform = build_transform(is_train, config)
     if config.DATA.DATASET == 'imagenet':
         prefix = 'train' if is_train else 'val'
@@ -142,6 +152,8 @@ def build_dataset(is_train, config):
 
 
 def build_transform(is_train, config):
+    """构建数据增强：训练用 timm create_transform（含随机裁剪/翻转/AutoAugment/随机擦除），
+    验证用 Resize+CenterCrop+ToTensor+Normalize（imagenet 均值方差）。"""
     resize_im = config.DATA.IMG_SIZE > 32
     if is_train:
         # this should always dispatch to transforms_imagenet_train

@@ -7,6 +7,23 @@
 # Written by Ze Liu
 # --------------------------------------------------------
 
+"""
+main.py —— VMamba 分类训练/评估入口（继承自 Swin Transformer 模板）
+====================================================================
+【角色】这是原有 VMamba 仓库（MzeroMiko/VMamba）的 ImageNet 分类训练脚本；
+Mamba-FCS 本身不经过本脚本（它自有 train.py 与 YAML 管线），
+本文件保留用于：① 复现 VMamba 预训练/微调（权重来源）
+② 作为"backbone 如何被训练"的参照。
+
+【流程】
+  parse_option() → get_config()（yacs）→ main(config)：
+    build_loader → build_model → build_optimizer → train/validate/throughput
+  分布式：env:// 初始化（RANK/WORLD_SIZE），学习率按总 batch size 线性缩放。
+
+【与 Mamba-FCS 的关系】Mamba-FCS 使用本仓库预训练好的 vssm_base 权重
+（configs 里的 pretrained_weight_path），再冻结/加载骨干训练检测任务。
+"""
+
 import os
 import time
 import json
@@ -44,6 +61,7 @@ def str2bool(v):
     """
     Converts string to bool type; enables command line 
     arguments in the format of '--arg1 true --arg2 false'
+    【中文】命令行参数转布尔：接受 yes/true/t/y/1 等。
     """
     if isinstance(v, bool):
         return v
@@ -56,6 +74,7 @@ def str2bool(v):
 
 
 def parse_option():
+    """解析命令行参数（--cfg 必填 + 常用覆盖项），并加载 yacs 配置。"""
     parser = argparse.ArgumentParser('Swin Transformer training and evaluation script', add_help=False)
     parser.add_argument('--cfg', type=str, required=True, metavar="FILE", help='path to config file', )
     parser.add_argument(
@@ -104,6 +123,7 @@ def parse_option():
 
 
 def main(config):
+    """训练或评估主流程：建数据→建模型→建优化器→（加载/恢复）→训练/验证/吞吐。"""
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
 
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
@@ -221,6 +241,7 @@ def main(config):
 
 
 def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler, loss_scaler, model_ema=None):
+    """单 epoch 训练：AMP 前向 → 损失 → 梯度累积/缩放/裁剪 → 每步更新 LR 与 EMA。"""
     model.train()
     optimizer.zero_grad()
 
@@ -289,6 +310,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
 
 @torch.no_grad()
 def validate(config, data_loader, model):
+    """验证：Acc@1/Acc@5 与 loss 的多卡平均（reduce_tensor）。"""
     criterion = torch.nn.CrossEntropyLoss()
     model.eval()
 
@@ -337,6 +359,7 @@ def validate(config, data_loader, model):
 
 @torch.no_grad()
 def throughput(data_loader, model, logger):
+    """吞吐测试：预热 50 次后测 30 次耗时，打印 batch×30/(秒)。"""
     model.eval()
 
     for idx, (images, _) in enumerate(data_loader):

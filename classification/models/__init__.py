@@ -1,3 +1,10 @@
+"""
+models/__init__.py —— VMamba 模型工厂
+=======================================
+build_model(config)：按 MODEL.TYPE 构建模型（vssm / heat / mmpretrain 分类器）。
+Mamba-FCS 实际不走此工厂：它直接调用 changedetection.models.STMambaSCD，
+内部引用的 Backbone_VSSM 继承自 vmamba.VSSM。
+"""
 import os
 from functools import partial
 
@@ -17,6 +24,7 @@ except:
 
 # still on developing...
 def build_vssm_model(config, is_pretrain=False):
+    """【中文】按配置构建 VSSM（vssm1 实验用）。"""
     model_type = config.MODEL.TYPE
     if model_type in ["vssm"]:
         model = VSSM(
@@ -56,6 +64,7 @@ def build_vssm_model(config, is_pretrain=False):
 
 # still on developing...
 def build_heat_model(config, is_pretrain=False):
+    """【中文】按配置构建 HeatM（实验模型，Mamba-FCS 未使用）。"""
     model_type = config.MODEL.TYPE
     if model_type in ["heat"]:
         model = HeatM(
@@ -72,6 +81,8 @@ def build_heat_model(config, is_pretrain=False):
 
 # used for analyze
 def build_mmpretrain_models(cfg="swin_tiny", ckpt=True, only_backbone=False, with_norm=True, **kwargs):
+    """【中文】从 mmpretrain 构建参照模型（Swin/ConvNeXt/DeiT/ResNet/RepLK），
+    仅供 analyze/ 目录下 FLOPs、可视化分析对比用。"""
     import os
     from functools import partial
     from mmengine.runner import CheckpointLoader
@@ -323,7 +334,7 @@ def build_heat_models_(cfg="heat_tiny", ckpt=True, only_backbone=False, with_nor
     if ckpt:
         ckpt = model_ckpt
         try:
-            _ckpt = torch.load(open(ckpt, "rb"), map_location=torch.device("cpu"))
+            _ckpt = torch.load(open(ckpt, "rb"), map_location=torch.device("cpu"), weights_only=True)
             print(f"Successfully load ckpt {ckpt}")
             incompatibleKeys = model.load_state_dict(_ckpt[ckpt_key], strict=False)
             print(incompatibleKeys)        
@@ -334,6 +345,7 @@ def build_heat_models_(cfg="heat_tiny", ckpt=True, only_backbone=False, with_nor
 
 
 def build_model(config, is_pretrain=False):
+    """【中文】统一模型工厂：vssm → heat → mmpretrain 分类器（依次尝试）。"""
     model = None
     
     if model is None:

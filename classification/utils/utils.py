@@ -7,6 +7,18 @@
 # Written by Ze Liu
 # --------------------------------------------------------
 
+"""
+utils/utils.py —— 分布式训练通用工具（原 VMamba 分类训练）
+============================================================
+  load_checkpoint_ema / load_pretrained_ema / save_checkpoint_ema
+    —— checkpoint 读取/保存（含 EMA 模型，可选）
+  get_grad_norm / ampscaler_get_grad_norm / NativeScalerWithGradNormCount
+    —— AMP 梯度缩放与梯度范数统计
+  auto_resume_helper / reduce_tensor
+    —— 自动恢复 & 多卡 reduce
+注意：本目录 utils 与原 VMamba 分类训练配套；Mamba-FCS 的变化检测训练
+不走此文件（使用 changedetection/ 内自己的 Trainer）。
+"""
 import os
 from math import inf
 import torch
@@ -15,6 +27,7 @@ from timm.utils import ModelEma as ModelEma
 
 
 def load_checkpoint_ema(config, model, optimizer, lr_scheduler, loss_scaler, logger, model_ema: ModelEma=None):
+    """【中文】恢复断点：加载 model/model_ema/optimizer/lr_scheduler/scaler 状态。"""
     logger.info(f"==============> Resuming form {config.MODEL.RESUME}....................")
     if config.MODEL.RESUME.startswith('https'):
         checkpoint = torch.hub.load_state_dict_from_url(
@@ -57,6 +70,7 @@ def load_checkpoint_ema(config, model, optimizer, lr_scheduler, loss_scaler, log
 
 
 def load_pretrained_ema(config, model, logger, model_ema: ModelEma=None):
+    """【中文】加载预训练权重（model 与可选 model_ema，strict=False）。"""
     logger.info(f"==============> Loading weight {config.MODEL.PRETRAINED} for fine-tuning......")
     checkpoint = torch.load(config.MODEL.PRETRAINED, map_location='cpu')
     
@@ -83,6 +97,7 @@ def load_pretrained_ema(config, model, logger, model_ema: ModelEma=None):
 
 
 def save_checkpoint_ema(config, epoch, model, max_accuracy, optimizer, lr_scheduler, loss_scaler, logger, model_ema: ModelEma=None, max_accuracy_ema=None):
+    """【中文】保存断点（model/optimizer/scheduler/scaler/epoch/可选 EMA 模型）。"""
     save_state = {'model': model.state_dict(),
                   'optimizer': optimizer.state_dict(),
                   'lr_scheduler': lr_scheduler.state_dict(),
@@ -102,6 +117,7 @@ def save_checkpoint_ema(config, epoch, model, max_accuracy, optimizer, lr_schedu
 
 
 def get_grad_norm(parameters, norm_type=2):
+    """【中文】梯度全局范数（CPU 数值，供日志显示；非 AMP 版本）。"""
     if isinstance(parameters, torch.Tensor):
         parameters = [parameters]
     parameters = list(filter(lambda p: p.grad is not None, parameters))
@@ -115,6 +131,7 @@ def get_grad_norm(parameters, norm_type=2):
 
 
 def auto_resume_helper(output_dir):
+    """【中文】在输出目录找最新 pth 检查点（按 mtime），用于自动断点续训。"""
     checkpoints = os.listdir(output_dir)
     checkpoints = [ckpt for ckpt in checkpoints if ckpt.endswith('pth')]
     print(f"All checkpoints founded in {output_dir}: {checkpoints}")
@@ -128,6 +145,7 @@ def auto_resume_helper(output_dir):
 
 
 def reduce_tensor(tensor):
+    """【中文】多卡求平均：all_reduce SUM 后除以世界大小（验证指标用）。"""
     rt = tensor.clone()
     dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= dist.get_world_size()
@@ -135,6 +153,7 @@ def reduce_tensor(tensor):
 
 
 def ampscaler_get_grad_norm(parameters, norm_type: float = 2.0) -> torch.Tensor:
+    """【中文】AMP 版本的梯度范数（张量返回，支持 inf 范数）。"""
     if isinstance(parameters, torch.Tensor):
         parameters = [parameters]
     parameters = [p for p in parameters if p.grad is not None]
@@ -151,6 +170,8 @@ def ampscaler_get_grad_norm(parameters, norm_type: float = 2.0) -> torch.Tensor:
 
 
 class NativeScalerWithGradNormCount:
+    """AMP 梯度缩放器封装：scale(loss).backward() → unscale → 可选裁剪 → step。
+    __call__ 返回梯度范数（未更新时返回 None）。"""
     state_dict_key = "amp_scaler"
 
     def __init__(self):

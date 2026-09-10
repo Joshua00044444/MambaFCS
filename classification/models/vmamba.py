@@ -1,3 +1,26 @@
+"""
+vmamba.py —— VMamba（Visual State Space Model）骨干源码
+========================================================
+【本仓库角色】Mamba-FCS 编码器的"底座"：
+  changedetection/models/Mamba_backbone.py 的 Backbone_VSSM 继承本文件的 VSSM；
+  ChangeDecoder / SemanticDecoder 内的 VSSBlock 也直接引用本文件。
+
+【文件结构（由下到上：底层到高层）】
+  1. 方向展开/合并：CrossScan / CrossMerge（4 方向扫描的张量重排，autograd 函数）
+                     CrossScan_Ab_1/2direction（消融实验的 1/2 方向变体）
+  2. 选择性扫描内核封装：SelectiveScanMamba / SelectiveScanCore / SelectiveScanOflex
+                      —— 封装 kernels/selective_scan 的 CUDA 内核（前向+反向）
+                     cross_selective_scan —— 把"4 方向扫描"拼起来的核心函数
+  3. 基础模块：Linear2d / LayerNorm2d / PatchMerging2D / Permute / Mlp / gMlp
+  4. 核心模块：SS2D（一次空间选择性扫描 = Mamba 在视觉的落地）
+               VSSBlock（残差块：SS2D + MLP）
+  5. 骨干：VSSM（patch_embed + 4 级 VSSM_layer + 分类头）
+           Backbone_VSSM（去掉分类头、多尺度输出的变体）
+
+【关键配置（来自 vssm 配置文件，经 train_MambaSCD 传入）】
+  forward_type="v3noz" → SS2D.forward 走 forward_corev2（SelectiveScanOflex CUDA 内核），
+  "noz" 表示禁用 z 门控分支；norm_layer=ln2d → channel_first=True（特征 (B,C,H,W)）。
+"""
 import os
 import time
 import math
@@ -16,13 +39,20 @@ from fvcore.nn import FlopCountAnalysis, flop_count_str, flop_count, parameter_c
 DropPath.__repr__ = lambda self: f"timm.DropPath({self.drop_prob})"
 
 # triton cross scan, 2x speed than pytorch implementation =========================
+# Triton 实现的 CrossScan/CrossMerge（比 pytorch 版快约 2 倍），来自 csm_triton.py
 try:
     from .csm_triton import CrossScanTriton, CrossMergeTriton, CrossScanTriton1b1
 except:
     from csm_triton import CrossScanTriton, CrossMergeTriton, CrossScanTriton1b1
 
 # pytorch cross scan =============
+# ❗下面的 CrossScan/CrossMerge 把一张 (B,C,H,W) 特征图展开成 4 条序列：
+#   ① 行方向（flatten 展平）② 列方向（转置后展平）③④ 前两者的反转（反向扫描）。
+# 展开后一个像素在 4 条序列中各出现一次 → 扫描后合并（求和）即等价于
+# "东西南北 4 个方向都看到了"。这是 VMamba 把 1D SSM 用于 2D 图像的关键。
 class CrossScan(torch.autograd.Function):
+    """CrossScan：4 方向展开（forward）与反向合并（backward），用于交叉扫描。
+    输出形状 (B, 4, C, H*W)：第 0/1 为行/列正向序列，第 2/3 为反序。"""
     @staticmethod
     def forward(ctx, x: torch.Tensor):
         B, C, H, W = x.shape
@@ -44,6 +74,7 @@ class CrossScan(torch.autograd.Function):
 
 
 class CrossMerge(torch.autograd.Function):
+    """CrossMerge：把 4 条扫描结果的序列合并回单张 (B,D,H,W)（与 CrossScan 互逆）。"""
     @staticmethod
     def forward(ctx, ys: torch.Tensor):
         B, K, D, H, W = ys.shape
@@ -68,7 +99,9 @@ class CrossMerge(torch.autograd.Function):
 
 
 # these are for ablations =============
+# 消融实验用：分别只做"2 方向"与"1 方向"的扫描（验证 4 方向的贡献）
 class CrossScan_Ab_2direction(torch.autograd.Function):
+    """2 方向消融版：只展开行方向（正+反共 2 条）。"""
     @staticmethod
     def forward(ctx, x: torch.Tensor):
         B, C, H, W = x.shape
@@ -86,6 +119,7 @@ class CrossScan_Ab_2direction(torch.autograd.Function):
 
 
 class CrossMerge_Ab_2direction(torch.autograd.Function):
+    """2 方向消融版合并（与 CrossScan_Ab_2direction 配对）。"""
     @staticmethod
     def forward(ctx, ys: torch.Tensor):
         B, K, D, H, W = ys.shape
@@ -104,6 +138,7 @@ class CrossMerge_Ab_2direction(torch.autograd.Function):
 
 
 class CrossScan_Ab_1direction(torch.autograd.Function):
+    """1 方向消融版：4 条序列完全相同（退化为单方向扫描）。"""
     @staticmethod
     def forward(ctx, x: torch.Tensor):
         B, C, H, W = x.shape
@@ -119,6 +154,7 @@ class CrossScan_Ab_1direction(torch.autograd.Function):
 
 
 class CrossMerge_Ab_1direction(torch.autograd.Function):
+    """1 方向消融版合并。"""
     @staticmethod
     def forward(ctx, ys: torch.Tensor):
         B, K, C, H, W = ys.shape
@@ -132,6 +168,7 @@ class CrossMerge_Ab_1direction(torch.autograd.Function):
 
 
 # import selective scan ==============================
+# 尝试导入 kernels/selective_scan 编译出的 CUDA 扩展（前向/反向内核）
 try:
     import selective_scan_cuda_oflex
 except Exception as e:
@@ -155,6 +192,7 @@ except Exception as e:
 
 
 def check_nan_inf(tag: str, x: torch.Tensor, enable=True):
+    """调试辅助：检查张量是否有 NaN/Inf，有则进入 pdb 调试。"""
     if enable:
         if torch.isinf(x).any() or torch.isnan(x).any():
             print(tag, torch.isinf(x).any(), torch.isnan(x).any(), flush=True)
@@ -163,6 +201,7 @@ def check_nan_inf(tag: str, x: torch.Tensor, enable=True):
 
 # fvcore flops =======================================
 def flops_selective_scan_fn(B=1, L=256, D=768, N=16, with_D=True, with_Z=False, with_complex=False):
+    """估算一次选择性扫描（CUDA 内核）的 FLOPs（fvcore 统计用公式近似）。"""
     """
     u: r(B D L)
     delta: r(B D L)
@@ -187,6 +226,7 @@ def flops_selective_scan_fn(B=1, L=256, D=768, N=16, with_D=True, with_Z=False, 
 
 # this is only for selective_scan_ref...
 def flops_selective_scan_ref(B=1, L=256, D=768, N=16, with_D=True, with_Z=False, with_Group=True, with_complex=False):
+    """估算参考实现（pytorch 循环版）的 FLOPs，用于对照。"""
     """
     u: r(B D L)
     delta: r(B D L)
@@ -237,6 +277,7 @@ def flops_selective_scan_ref(B=1, L=256, D=768, N=16, with_D=True, with_Z=False,
 
 
 def print_jit_input_names(inputs):
+    """调试辅助：打印 JIT 输入名（fvcore 统计时用）。"""
     print("input params: ", end=" ", flush=True)
     try: 
         for i in range(10):
@@ -248,6 +289,9 @@ def print_jit_input_names(inputs):
 # cross selective scan ===============================
 # comment all checks if inside cross_selective_scan
 class SelectiveScanMamba(torch.autograd.Function):
+    """选择性扫描 autograd 封装（Mamba 内核版）：调用 kernels/selective_scan 编译的
+    selective_scan_cuda 扩展做前向（fwd）与反向（bwd）。
+    数学上实现 y_t = D·u_t + Σ_{i≤t} C_i·B_i·A^(t−i)·Δ_i（离散 Mamba 状态更新）。"""
     @staticmethod
     @torch.cuda.amp.custom_fwd
     def forward(ctx, u, delta, A, B, C, D=None, delta_bias=None, delta_softplus=False, nrows=1, backnrows=1, oflex=True):
@@ -271,6 +315,7 @@ class SelectiveScanMamba(torch.autograd.Function):
 
 
 class SelectiveScanCore(torch.autograd.Function):
+    """选择性扫描 autograd 封装（Core 内核版）：调用 selective_scan_cuda_core 扩展。"""
     @staticmethod
     @torch.cuda.amp.custom_fwd
     def forward(ctx, u, delta, A, B, C, D=None, delta_bias=None, delta_softplus=False, nrows=1, backnrows=1, oflex=True):
@@ -292,6 +337,8 @@ class SelectiveScanCore(torch.autograd.Function):
 
 
 class SelectiveScanOflex(torch.autograd.Function):
+    """选择性扫描 autograd 封装（Oflex 内核版）：当前 v3 配置实际使用的内核
+    （forward_type="v3..." → SelectiveScan=SelectiveScanOflex）。"""
     @staticmethod
     @torch.cuda.amp.custom_fwd
     def forward(ctx, u, delta, A, B, C, D=None, delta_bias=None, delta_softplus=False, nrows=1, backnrows=1, oflex=True):
@@ -342,6 +389,14 @@ def cross_selective_scan(
     dt_low_rank=True,
 ):
     # out_norm: whatever fits (B, L, C); LayerNorm; Sigmoid; Softmax(dim=1);...
+    """cross_selective_scan —— 一次完整的"交叉选择性扫描"（SS2D 的核心）。
+    流程：
+      1. CrossScan 把 (B,D,H,W) 展开为 4 方向序列 (B,4,D,L)；
+      2. einsum/conv1d 从特征中生成每个方向的扫描参数 dt、B、C（低秩投影）；
+      3. SelectiveScan（CUDA 内核）对 4 条序列分别做选择性扫描；
+      4. CrossMerge 把 4 条扫描结果合并回 (B,D,H,W)；
+      5. out_norm（LayerNorm2d / Sigmoid / Softmax 等）归一化输出。
+    """
 
     B, D, H, W = x.shape
     D, N = A_logs.shape
@@ -439,6 +494,8 @@ def selective_scan_flop_jit(inputs, outputs):
 # we have this class as linear and conv init differ from each other
 # this function enable loading from both conv2d or linear
 class Linear2d(nn.Linear):
+    """通道优先版的 Linear：把 nn.Linear 的权重视作 1x1 卷积，
+    直接对 (B,C,H,W) 特征做卷积投影（避免做 Permute 转置的开销）。"""
     def forward(self, x: torch.Tensor):
         # B, C, H, W = x.shape
         return F.conv2d(x, self.weight[:, :, None, None], self.bias)
@@ -449,6 +506,7 @@ class Linear2d(nn.Linear):
 
 
 class LayerNorm2d(nn.LayerNorm):
+    """通道优先版 LayerNorm：内部先 permute 成 (B,H,W,C) 做归一化再转回来。"""
     def forward(self, x: torch.Tensor):
         x = x.permute(0, 2, 3, 1)
         x = nn.functional.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
@@ -457,6 +515,9 @@ class LayerNorm2d(nn.LayerNorm):
 
 
 class PatchMerging2D(nn.Module):
+    """经典 patch merging 下采样（Swin 风格，v1 版 downsample<->patch merge）：
+    把 2x2 相邻像素沿通道维拼接（4*C），过 Linear 压到 2*C，再归一化。
+    （vssm1 配置用 DOWNSAMPLE=v3 时实际走 _make_downsample_v3，本类为兼容 v1 保留）"""
     def __init__(self, dim, out_dim=-1, norm_layer=nn.LayerNorm):
         super().__init__()
         self.dim = dim
@@ -484,6 +545,7 @@ class PatchMerging2D(nn.Module):
 
 
 class Permute(nn.Module):
+    """转置包装模块：按构造时给定的坐标轴顺序做 permute（用于 (B,H,W,C)<->(B,C,H,W)）。"""
     def __init__(self, *args):
         super().__init__()
         self.args = args
@@ -493,6 +555,8 @@ class Permute(nn.Module):
 
 
 class Mlp(nn.Module):
+    """标准 MLP（FFN）：Linear→激活→Dropout→Linear→Dropout。
+    channels_first=True 时用 Linear2d（通道优先 1x1 卷积）实现两层线性。"""
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.,channels_first=False):
         super().__init__()
         out_features = out_features or in_features
@@ -514,6 +578,9 @@ class Mlp(nn.Module):
 
 
 class gMlp(nn.Module):
+    """gMLP（gated MLP）：MLP 基础上加门控分支（两路线性/卷积，一路作门控）。
+
+    【维度约定】（以 SS2D 为例）：v2 前向中 z 门控形如 (B,d,z_H,W)..."""
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.,channels_first=False):
         super().__init__()
         self.channel_first = channels_first
@@ -538,6 +605,12 @@ class gMlp(nn.Module):
 
 
 class SS2D(nn.Module):
+    """★ SS2D —— Mamba 在视觉上的核心算子（一次"空间选择性扫描"）。
+    流程（forward_corev2 路径）：
+      in_proj(1x1 conv, 2维) → 深卷(3x3 depthwise)→激活→
+      cross_selective_scan（4 方向 + CUDA 选择性扫描）→ out_proj
+    输入输出均为 (B, C, H, W)（channel_first）或 (B, H, W, C)（channel-last）。
+    参数：d_state=SSM 状态维、ssm_ratio=通道缩放、d_conv=深度卷积核、dt_rank=delta 投影秩。"""
     def __init__(
         self,
         # basic dims ===========
@@ -1274,6 +1347,7 @@ class SS2D(nn.Module):
 
 
 class VSSBlock(nn.Module):
+    """VMamba 残差块：x + DropPath(SS2D(norm(x))) + DropPath(MLP(norm2(x)))。"""
     def __init__(
         self,
         hidden_dim: int = 0,
@@ -1361,6 +1435,10 @@ class VSSBlock(nn.Module):
 
 
 class VSSM(nn.Module):
+    """VSSM —— 完整 VMamba 骨干（分类版）：
+      patch_embed → 4 级 [VSSBlock × depths][+ downsample×3] → classifier。
+    本类含分类头；Mamba-FCS 实际用的是去掉分类头的子类 Backbone_VSSM。
+    说明：`for layer` 的 `downsample` 用 nn.Identity 占位时（末层）只做 blocks。"""
     def __init__(
         self, 
         patch_size=4, 
@@ -1691,6 +1769,9 @@ class VSSM(nn.Module):
 
 # compatible with openmmlab
 class Backbone_VSSM(VSSM):
+    """供变化检测（Mamba-FCS）使用的骨干子类：
+      添加 out_indices 输出层 + 各层 outnorm，删除分类头，返回多尺度特征。
+      （另一份改动版见 changedetection/models/Mamba_backbone.py —— 本项目实际导入的是后者）"""
     def __init__(self, out_indices=(0, 1, 2, 3), pretrained=None, norm_layer="ln", **kwargs):
         kwargs.update(norm_layer=norm_layer)
         super().__init__(**kwargs)

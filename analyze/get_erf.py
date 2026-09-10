@@ -1,3 +1,20 @@
+"""
+get_erf —— 有效感受野（Effective Receptive Field, ERF）可视化
+==============================================================
+原理（RepLKNet 论文的做法）：
+    1. 取一张输入图，把模型输出特征图的**中心点**位置对输入像素求梯度，
+       |∂中心响应/∂输入像素| 越大，说明该像素对中心输出贡献越大；
+    2. 对 num_images 张随机图片的贡献图取平均，得到平均 ERF 热力图；
+    3. 对热力图做 (x+1)^0.25 压缩 + 归一化后画 heatmap，并统计
+       "贡献和占比达到 20%/30%/50%/99% 的中心矩形边长与面积占比"，
+       用数值定量比较不同骨干（vssm/swin/convnext/deit/resnet...）的
+       感受野大小差异。
+
+流程：visualize_erf（算梯度贡献图，存 .npy）→ analyze_erf（读 npy → 归一化
+→ 画 heatmap_<model>_before/after.png，before=随机初始化、after=加载预训练权重）。
+
+依赖：ImageNet val 目录（data_path/val）；结果输出到 analyze/show/erf/。
+"""
 import os
 import time
 from functools import partial
@@ -40,6 +57,8 @@ if True:
     # plt.rc('font', **{'family': 'Times New Roman'})
     plt.rcParams['axes.unicode_minus'] = False
 
+# 动态导入工具：把指定目录临时插到 sys.path 前面，import 后再弹出，
+# 这样可以从仓库其他子目录（如 ../classification）按模块名导入构建函数
 def import_abspy(name="models", path="classification/"):
     import sys
     import importlib
@@ -50,6 +69,7 @@ def import_abspy(name="models", path="classification/"):
     sys.path.pop(0)
     return module
 
+# 导入 ../classification/models 里的三套模型构建函数（mmpretrain 封装 / vssm / heat）
 build = import_abspy(
     "models", 
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "../classification/"),
@@ -60,7 +80,9 @@ build_heat_models: Callable = build.build_heat_models_
 
 
 # copied from https://github.com/DingXiaoH/RepLKNet-pytorch
+# 第二步：读取 visualize_erf 保存的贡献图 npy，画热力图并统计高贡献区域
 def analyze_erf(source="/tmp/erf.npy", dest="heatmap.png", ALGRITHOM=lambda x: np.power(x - 1, 0.25)):
+    # 把归一化后的贡献图画成 RdYlGn 热力图并保存
     def heatmap(data, camp='RdYlGn', figsize=(10, 10.75), ax=None, save_path=None):
         plt.figure(figsize=figsize, dpi=40)
         ax = sns.heatmap(data,
@@ -69,6 +91,8 @@ def analyze_erf(source="/tmp/erf.npy", dest="heatmap.png", ALGRITHOM=lambda x: n
                     center=0, annot=False, ax=ax, cbar=True, annot_kws={"size": 24}, fmt='.2f')
         plt.savefig(save_path)
 
+    # 从中心向外逐步扩大正方形窗口，返回贡献和首次超过 thresh 时的
+    # 边长（像素）及该窗口面积占全图比例 —— 即"多少面积承载了 thresh 比例的贡献"
     def get_rectangle(data, thresh):
         h, w = data.shape
         all_sum = np.sum(data)
@@ -103,7 +127,10 @@ def analyze_erf(source="/tmp/erf.npy", dest="heatmap.png", ALGRITHOM=lambda x: n
 
 
 # copied from https://github.com/DingXiaoH/RepLKNet-pytorch
+# 第一步：前向推理累计平均 ERF 贡献图，结果存为 .npy（供 analyze_erf 消费）
 def visualize_erf(MODEL: nn.Module=None, num_images=50, data_path="/dataset/ImageNet2012", save_path=f"/tmp/{time.time()}/erf.npy"):
+    # 对单张图求贡献图：输出特征图中心点对输入像素的梯度，
+    # ReLU 后按 (batch, channel) 求和 → (H, W) 的单通道贡献图
     def get_input_grad(model, samples):
         outputs = model(samples)
         out_size = outputs.size()
@@ -117,6 +144,7 @@ def visualize_erf(MODEL: nn.Module=None, num_images=50, data_path="/dataset/Imag
 
     def main(args, MODEL: nn.Module = None):
         #   ================================= transform: resize to 1024x1024
+        # ERF 分析要求大分辨率输入（1024×1024），让感受野差异充分展现
         t = [
             transforms.Resize((1024, 1024), interpolation=Image.BICUBIC),
             transforms.ToTensor(),
@@ -136,11 +164,13 @@ def visualize_erf(MODEL: nn.Module=None, num_images=50, data_path="/dataset/Imag
         model = MODEL
         model.cuda().eval()
 
+        # lr=0 的优化器只是借用其 zero_grad 接口，不实际更新参数
         optimizer = optim.SGD(model.parameters(), lr=0, weight_decay=0)
 
         meter = AverageMeter()
         optimizer.zero_grad()
 
+        # 逐张累计贡献图，直到凑满 num_images 张（NaN 图跳过）后存盘
         for _, (samples, _) in enumerate(data_loader_val):
 
             if meter.count == args.num_images:
@@ -180,6 +210,8 @@ def build_models(**kwargs):
     return model
 
 
+# 各规模（tiny/small/base）下对比模型 → 各框架内配置名的映射表，
+# 用于 main() 里按名字批量构建待对比的骨干
 NAMES = dict(
     tiny=dict(
         heat="heat_tiny",
@@ -209,17 +241,22 @@ NAMES = dict(
 
 def main():
     showpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "./show/erf")
+    # only_backbone：只测骨干（去掉分类头）；with_norm：保留归一化层
     kwargs = dict(only_backbone=True, with_norm=False)
+    # 对每个对比模型各跑两次：随机初始化（before）与加载预训练权重（after），
+    # 直观展示"训练让感受野变大/更集中"的现象
     for model in ["heat", "vssm", "swin", "convnext", "replknet", "deit", "resnet50"]:
         try:
             cfg=NAMES["tiny"][model]
         except:
             continue
         init_model = partial(build_models, cfg=NAMES["tiny"][model], **kwargs)
+        # ckpt=False → 随机初始化权重
         save_path = f"/tmp/{time.time()}/erf.npy"
         visualize_erf(init_model(ckpt=False), save_path=save_path)
         analyze_erf(source=save_path, dest=f"{showpath}/heatmap_{model}_before.png")
 
+        # ckpt=True → 加载预训练权重
         save_path = f"/tmp/{time.time()}/erf.npy"
         visualize_erf(init_model(ckpt=True), save_path=save_path)
         analyze_erf(source=save_path, dest=f"{showpath}/heatmap_{model}_after.png")
