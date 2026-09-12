@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mamba-FCS 完整复现流程报告</title>
+<style>
+  :root{
+    --bg:#f6f8fa; --card:#ffffff; --ink:#1f2933; --muted:#5b6b7a;
+    --accent:#0b6e99; --accent2:#0d8a6a; --warn-bg:#fff7e6; --warn-bd:#f0b429;
+    --danger-bg:#fdecec; --danger-bd:#e05252; --ok-bg:#eafaf1; --ok-bd:#2fa96e;
+    --code-bg:#0f172a; --code-ink:#e2e8f0; --bd:#dde4ea;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.75}
+  .layout{display:flex;max-width:1400px;margin:0 auto}
+  nav#toc{width:270px;flex:0 0 270px;position:sticky;top:0;height:100vh;overflow-y:auto;padding:28px 18px;background:#0f2233;color:#cfe3f0;font-size:13.5px}
+  nav#toc h3{color:#fff;margin:0 0 12px;font-size:15px;letter-spacing:1px;border-bottom:1px solid #29465e;padding-bottom:10px}
+  nav#toc a{display:block;color:#a9c6da;text-decoration:none;padding:5px 8px;border-radius:6px;margin:1px 0}
+  nav#toc a:hover{background:#1b3a52;color:#fff}
+  nav#toc .lv2{padding-left:22px;font-size:12.5px}
+  main{flex:1;padding:34px 46px 90px;min-width:0}
+  header.hero{background:linear-gradient(135deg,#0b3c5d 0%,#0b6e99 55%,#0d8a6a 100%);color:#fff;border-radius:16px;padding:38px 42px;margin-bottom:30px}
+  header.hero h1{margin:0 0 10px;font-size:30px}
+  header.hero p{margin:6px 0;opacity:.94;max-width:900px}
+  .badge{display:inline-block;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);border-radius:20px;padding:2px 14px;font-size:13px;margin:8px 6px 0 0}
+  h2{font-size:23px;margin:46px 0 14px;padding-bottom:8px;border-bottom:3px solid var(--accent);color:#0b3c5d}
+  h2 .stepnum{display:inline-block;background:var(--accent);color:#fff;border-radius:8px;padding:1px 12px;font-size:16px;margin-right:10px;vertical-align:2px}
+  h3{font-size:18px;margin:28px 0 10px;color:#0b3c5d}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:22px 26px;margin:16px 0;box-shadow:0 1px 3px rgba(15,40,70,.06)}
+  .callout{border-radius:10px;padding:14px 18px;margin:14px 0;border-left:5px solid;font-size:14.5px}
+  .callout.warn{background:var(--warn-bg);border-color:var(--warn-bd)}
+  .callout.danger{background:var(--danger-bg);border-color:var(--danger-bd)}
+  .callout.ok{background:var(--ok-bg);border-color:var(--ok-bd)}
+  .callout.info{background:#e8f4fb;border-color:var(--accent)}
+  .callout b:first-child{display:block;margin-bottom:4px}
+  pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:16px 18px;overflow-x:auto;font-size:13.5px;line-height:1.65;font-family:Consolas,"JetBrains Mono",Menlo,monospace}
+  code{font-family:Consolas,"JetBrains Mono",Menlo,monospace}
+  p code,li code,td code{background:#eef2f6;border:1px solid #d7dee5;border-radius:5px;padding:1px 6px;font-size:13px;color:#b34700}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;background:#fff}
+  th{background:#0b3c5d;color:#fff;text-align:left;padding:9px 12px;font-weight:600}
+  td{border:1px solid var(--bd);padding:8px 12px;vertical-align:top}
+  tr:nth-child(even) td{background:#f4f8fb}
+  .tag{display:inline-block;border-radius:5px;padding:0 8px;font-size:12px;font-weight:600;margin-right:4px}
+  .tag.req{background:#e05252;color:#fff}
+  .tag.rec{background:#f0b429;color:#5b4300}
+  .tag.opt{background:#8aa3b2;color:#fff}
+  .flow{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch;margin:18px 0}
+  .flow .node{background:#fff;border:2px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:13px;flex:1 1 130px;min-width:130px;text-align:center}
+  .flow .node b{display:block;color:var(--accent);font-size:14px;margin-bottom:2px}
+  .flow .arr{align-self:center;color:var(--accent);font-size:20px;font-weight:700}
+  .checklist li{list-style:none;margin:6px 0}
+  .checklist input{margin-right:8px;transform:scale(1.15)}
+  ul.checklist{padding-left:6px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+  .small{font-size:12.5px;color:var(--muted)}
+  footer{margin-top:60px;color:var(--muted);font-size:13px;text-align:center}
+  details{background:#fff;border:1px solid var(--bd);border-radius:10px;padding:12px 18px;margin:12px 0}
+  summary{cursor:pointer;font-weight:600;color:#0b3c5d}
+  @media print{nav#toc{display:none}.layout{display:block}main{padding:0 20px}header.hero{border-radius:0}}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav id="toc">
+  <h3>📑 目录</h3>
+  <a href="#s0">0. 项目速览</a>
+  <a href="#s1">1. 复现路线总览</a>
+  <a href="#s2">2. 环境需求</a>
+  <a href="#s3">3. 服务器部署与环境安装</a>
+  <a href="#s4">4. 编译 Selective Scan CUDA 内核（关键）</a>
+  <a href="#s5">5. 权重准备</a>
+  <a href="#s6">6. 数据集准备</a>
+  <a href="#s7">7. 配置文件详解</a>
+  <a href="#s8">8. 训练步骤</a>
+  <a href="#s9">9. 推理与评估步骤</a>
+  <a href="#s10">10. 消融实验步骤</a>
+  <a href="#s11">11. 模型分析工具（可选）</a>
+  <a href="#s12">12. 预期结果对照</a>
+  <a href="#s13">13. 常见问题与踩坑清单</a>
+  <a href="#s14">14. 最终检查清单</a>
+  <a href="#s15">附录：仓库结构与关键文件</a>
+</nav>
+<main>
+
+<header class="hero">
+  <h1>🚀 Mamba-FCS 完整复现流程报告</h1>
+  <p><b>Mamba-FCS: Joint Spatio-Frequency Feature Fusion, Change-Guided Attention, and SeK Loss for Enhanced Semantic Change Detection in Remote Sensing</b></p>
+  <p>IEEE JSTARS 2026（DOI: 10.1109/JSTARS.2026.3663066）· arXiv: 2508.08232 · 官方仓库：github.com/Buddhi19/MambaFCS</p>
+  <span class="badge">任务：遥感语义变化检测（SCD）</span>
+  <span class="badge">数据集：SECOND / Landsat-SCD</span>
+  <span class="badge">骨干：VMamba-Base</span>
+  <span class="badge">本报告基于仓库 D:\MambaFCS 当前源码逐文件核对生成</span>
+</header>
+
+<!-- ===================== 0 项目速览 ===================== -->
+<h2 id="s0">项目速览</h2>
+<div class="card">
+<p>Mamba-FCS 输入同一区域双时相影像 <b>T1（前期）/ T2（后期）</b>，同时输出三张图：</p>
+<ul>
+  <li><b>二元变化图</b> output_bcd (B,2,H,W) —— 哪里发生了变化；</li>
+  <li><b>T1 语义分类图</b> output_T1 (B,C,H,W) —— 前期地物类别；</li>
+  <li><b>T2 语义分类图</b> output_T2 (B,C,H,W) —— 后期地物类别。</li>
+</ul>
+<h3>三大核心创新（也是消融实验的对象）</h3>
+<table>
+  <tr><th>创新点</th><th>代码位置</th><th>作用</th></tr>
+  <tr><td><b>JSF 空频融合</b>（FFT_Fusion）</td><td><code>changedetection/models/GuidedFusion.py</code></td><td>把 FFT 对数幅度谱注入空间特征，对光照/季节变化更稳健、边界更锐利</td></tr>
+  <tr><td><b>CGA 变化引导注意力</b></td><td><code>changedetection/models/SemanticDecoder.py</code> + <code>MultiScaleChangeGuidedAttention.py</code></td><td>特征 × sigmoid(变化图)：变化区域增强、非变化区域抑制，引导两期语义解码</td></tr>
+  <tr><td><b>SeK 损失</b></td><td><code>changedetection/utils_func/loss.py → SeK_Loss</code></td><td>在变化区域内直接优化 soft-Kappa + 频率加权 mIoU，缓解长尾类不平衡</td></tr>
+</table>
+<p class="small">底层骨干为 VMamba（vssm_base_0229，4 级输出 128/256/512/1024 通道），依赖自编译的 <code>selective_scan</code> CUDA 内核。</p>
+</div>
+
+<!-- ===================== 1 路线总览 ===================== -->
+<h2 id="s1"><span class="stepnum">1</span>复现路线总览</h2>
+<div class="card">
+  <div class="flow">
+    <div class="node"><b>① 环境</b>Conda + PyTorch + CUDA</div>
+    <div class="arr">→</div>
+    <div class="node"><b>② 内核编译</b>kernels/selective_scan</div>
+    <div class="arr">→</div>
+    <div class="node"><b>③ 权重</b>VMamba 预训练 + 官方 checkpoint</div>
+    <div class="arr">→</div>
+    <div class="node"><b>④ 数据</b>SECOND / Landsat-SCD</div>
+    <div class="arr">→</div>
+    <div class="node"><b>⑤ 训练</b>train.py + YAML</div>
+    <div class="arr">→</div>
+    <div class="node"><b>⑥ 推理评估</b>notebook / 自写脚本</div>
+    <div class="arr">→</div>
+    <div class="node"><b>⑦ 消融</b>wo_FFT / wo_CGA / wo_SeK</div>
+  </div>
+  <div class="callout info"><b>⏱ 工作量预估</b>
+  环境与内核编译 0.5～1 天（首次编译内核约 10～30 分钟）；数据准备 0.5 天（SECOND 需做一次调色板→整数标签转换）；单个数据集完整训练按论文迭代数需数天（建议先跑到出现最优 checkpoint 再评估，见第 8 节说明）；消融实验为完整训练的 3 倍额外时长，可在多卡/多进程下并行。</div>
+</div>
+
+<!-- ===================== 2 环境需求 ===================== -->
+<h2 id="s2"><span class="stepnum">2</span>环境需求</h2>
+<div class="card">
+<h3>2.1 硬件要求</h3>
+<table>
+  <tr><th>项目</th><th>要求</th><th>说明</th></tr>
+  <tr><td>GPU</td><td><span class="tag req">必须</span>NVIDIA 显存 ≥ 24 GB</td><td>官方在 RTX A5000（24 GB，sm_86）上以 batch=2、crop=512 训练 SECOND。架构需 Ampere 及以上（A100=sm_80、RTX 3090/A5000=sm_86、RTX 4090=sm_89、H100=sm_90），编译内核时需按显卡修改 <code>setup.py</code>（见第 4 节）</td></tr>
+  <tr><td>CPU / 内存</td><td><span class="tag rec">建议</span>≥ 16 核 / ≥ 64 GB</td><td>DataLoader 使用 <code>num_workers=16</code>；内核编译时 <code>MAX_JOBS=4</code> 也吃内存</td></tr>
+  <tr><td>磁盘</td><td><span class="tag rec">建议</span>≥ 100 GB</td><td>数据集约 10～20 GB + checkpoint（单个模型权重约 1～2 GB，训练中会持续保存最优）+ 内核编译缓存</td></tr>
+  <tr><td>操作系统</td><td><span class="tag req">必须</span>Linux（Ubuntu 20.04/22.04 推荐）</td><td>CUDA 内核编译与 triton 依赖均面向 Linux；Windows 下只能 CPU/极简调试，无法完成完整复现</td></tr>
+</table>
+
+<h3>2.2 软件栈（版本依据 README 与源码实际 import 逐项核对）</h3>
+<table>
+  <tr><th>组件</th><th>版本要求</th><th>备注</th></tr>
+  <tr><td>Python</td><td>3.10（README 指定，conda 创建）</td><td>仓库缓存显示作者部分环境用到 3.13，建议按 README 用 3.10</td></tr>
+  <tr><td>PyTorch / torchvision</td><td>与显卡匹配的 CUDA 构建</td><td>README 实测：<code>pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126</code>；内核 README 显示作者亦用 <code>torch 2.12.1+cu130</code> 成功构建。任选其一，但必须与 nvcc 大版本一致</td></tr>
+  <tr><td>CUDA Toolkit (nvcc)</td><td><b>大版本必须与 torch 的 CUDA 大版本一致</b></td><td>用 <code>python -c "import torch; print(torch.version.cuda)"</code> 与 <code>nvcc --version</code> 对照；无 root 时可按 4.3 节把 nvcc 装进虚拟环境</td></tr>
+  <tr><td>requirements.txt 清单</td><td>packaging, triton, timm==0.4.12, pytest, chardet, yacs, termcolor, submitit, tensorboardX, fvcore, seaborn, imageio, scipy, tensorboard</td><td><code>timm==0.4.12</code> 是硬约束（模型代码从 <code>timm.models.layers</code> 导入）；<code>triton</code> 仅 Linux 可装</td></tr>
+</table>
+
+<div class="callout danger"><b>⛔ requirements.txt 的三处坑（务必补装/替换）</b>
+<ol style="margin:6px 0 0">
+  <li>清单里的 <code>cv2</code> 在 PyPI 上<b>不存在</b>，直接 <code>pip install -r requirements.txt</code> 会在这一行失败 —— 改装 <code>opencv-python</code>；</li>
+  <li>模型代码 import 了 <code>einops</code>、<code>tqdm</code>，清单里没有 —— 需补装；</li>
+  <li>README 要求另装 <code>pyyaml</code>；推理 notebook 还需要 <code>python-dotenv</code> 与 <code>thop</code>（统计 FLOPs 用）。</li>
+</ol>
+</div>
+
+<h3>2.3 一键补全安装命令</h3>
+<pre><code>pip install --upgrade pip
+pip install packaging triton timm==0.4.12 pytest chardet yacs termcolor submitit \
+            tensorboardX fvcore seaborn imageio scipy tensorboard \
+            opencv-python einops tqdm pyyaml python-dotenv thop
+# 再按你的 CUDA 安装 torch / torchvision（示例为 cu126）：
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126</code></pre>
+</div>
+
+<!-- ===================== 3 服务器部署 ===================== -->
+<h2 id="s3"><span class="stepnum">3</span>服务器部署与环境安装</h2>
+<div class="card">
+<p>你后续提供服务器 <b>IP / 端口 / 密码</b> 后，按以下顺序操作即可。以下命令均在 Linux 服务器上执行。</p>
+
+<h3>3.1 连接服务器并检查硬件</h3>
+<pre><code># 本机连接（Git Bash / PowerShell 均可）
+ssh -p &lt;端口&gt; &lt;用户名&gt;@&lt;服务器IP&gt;
+
+# 服务器上检查 GPU、驱动、CUDA
+nvidia-smi                      # 看显卡型号、显存、驱动版本、空闲卡号
+nvcc --version                  # 看系统 CUDA 编译器版本（没有也没关系，见 4.3）
+df -h .                         # 确认磁盘余量
+free -h                         # 确认内存</code></pre>
+
+<h3>3.2 上传/克隆代码（关键：目录名必须叫 MambaFCS）</h3>
+<div class="callout danger"><b>⛔ 路径硬约束（源码核对结论）</b>
+仓库内所有 import 均为 <code>from MambaFCS.changedetection... </code> 形式，且 <code>train.py</code> 把"代码库<b>上一层目录</b>"加入 <code>sys.path</code> 并按它解析 YAML 内的相对路径。因此：<b>① 克隆目录必须命名为 <code>MambaFCS</code>（git clone 默认即是）；② 必须在 MambaFCS 目录内启动训练。</b></div>
+<pre><code># 方式 A：服务器能联网则直接克隆
+git clone https://github.com/Buddhi19/MambaFCS.git
+cd MambaFCS
+
+# 方式 B：本地上传（在本地 Git Bash 执行；-P 注意大写）
+scp -P &lt;端口&gt; -r "D:\MambaFCS" &lt;用户名&gt;@&lt;服务器IP&gt;:/home/&lt;用户名&gt;/
+# 或用 rsync 断点续传（推荐大数据量时）
+rsync -avzP -e "ssh -p &lt;端口&gt;" /d/MambaFCS &lt;用户名&gt;@&lt;服务器IP&gt;:/home/&lt;用户名&gt;/</code></pre>
+
+<h3>3.3 创建 Conda 环境并安装依赖</h3>
+<pre><code>conda create -n mambafcs python=3.10 -y
+conda activate mambafcs
+
+pip install --upgrade pip
+# ① 按 CUDA 安装 torch（示例 cu126；cu130 等同理换 index-url）
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+
+# ② 其余依赖（cv2 → opencv-python，并补齐缺失包）
+pip install packaging triton timm==0.4.12 pytest chardet yacs termcolor submitit \
+            tensorboardX fvcore seaborn imageio scipy tensorboard \
+            opencv-python einops tqdm pyyaml python-dotenv thop
+
+# ③ 验证
+python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)"
+python -c "import timm, einops, cv2, yaml, imageio, fvcore; print('deps OK')"</code></pre>
+<div class="callout warn"><b>⚠ 断线安全：全程使用 tmux</b>
+训练/编译动辄数小时，SSH 断开不应中断任务。建议所有长任务都在 tmux 里跑：<code>tmux new -s mambafcs</code> 进入会话，<code>Ctrl+B 再按 D</code> 脱离，重连后 <code>tmux attach -t mambafcs</code> 恢复。</div>
+</div>
+
+<!-- ===================== 4 内核编译 ===================== -->
+<h2 id="s4"><span class="stepnum">4</span>编译 Selective Scan CUDA 内核（关键步骤）</h2>
+<div class="card">
+<p>VMamba 的 SS2D 扫描依赖 <code>kernels/selective_scan</code> 中的自定义 CUDA 算子（<code>SelectiveScanOflex</code> 等），<b>不编译则模型无法前向</b>。</p>
+
+<h3>4.1 通用构建流程（必读）</h3>
+<pre><code>cd kernels/selective_scan
+pip install . --no-build-isolation     # ★ 必须加 --no-build-isolation
+cd ../..</code></pre>
+<div class="callout danger"><b>⛔ 为什么必须 --no-build-isolation</b>
+该目录只有 <code>setup.py</code>、没有 <code>pyproject.toml</code>，<code>setup.py</code> 在构建期 <code>import torch</code>。pip 默认的构建隔离会新建一个没有 torch 的临时环境，导致 <code>ModuleNotFoundError: No module named 'torch'</code>。</div>
+
+<h3>4.2 按 GPU 架构修改 setup.py（首次编译前）</h3>
+<p>当前 <code>setup.py</code> 内置的 gencode 为 <b>sm_80 + sm_86</b>（并按条件附加 sm_90），与官方机器 RTX A5000 匹配。<b>其他显卡必须编辑 <code>kernels/selective_scan/setup.py</code> 中的 <code>-gencode</code> 行</b>：</p>
+<table>
+  <tr><th>你的 GPU</th><th>架构</th><th>gencode 写法</th></tr>
+  <tr><td>A100 / A800</td><td>sm_80</td><td><code>arch=compute_80,code=sm_80</code></td></tr>
+  <tr><td>RTX 3090 / A5000 / A6000</td><td>sm_86</td><td><code>arch=compute_86,code=sm_86</code>（默认已含）</td></tr>
+  <tr><td>RTX 4090 / 4080 / L40</td><td>sm_89</td><td>需把 86 那行改为 <code>arch=compute_89,code=sm_89</code>（或追加）</td></tr>
+  <tr><td>H100 / H800</td><td>sm_90</td><td><code>arch=compute_90,code=sm_90</code></td></tr>
+</table>
+<p>查自己显卡架构：<code>python -c "import torch; print(torch.cuda.get_device_capability(0))"</code>，输出如 (8, 9) → sm_89。</p>
+
+<h3>4.3 CUDA 13（cu130）构建且系统无对应 toolkit 时（无 root 也可行）</h3>
+<p>若 torch 是 <code>cu130</code> 构建、系统只有 CUDA 12.x 或没有 toolkit，把匹配的编译器装进虚拟环境即可（torch 已自带 cu13 运行时/头文件）：</p>
+<pre><code>cd kernels/selective_scan
+# CUDA 13 编译器 + CCCL(CUB/Thrust) 头文件 + ninja
+pip install "cuda-toolkit[nvcc,cccl]==13.0.2" ninja
+# 把 nvvm/crt 钉在与 nvcc 相同的版本(13.0.88)，否则新版前端产出的 PTX
+# 会被 13.0 的 ptxas 拒绝："Unsupported .version 9.3"
+pip install "nvidia-nvvm==13.0.88" "nvidia-cuda-crt==13.0.88"
+
+# 运行库只有 libcudart.so.13，链接器需要不带版本号的软链
+CU=$(python -c "import os,nvidia;print(os.path.join(os.path.dirname(nvidia.__file__),'cu13'))")
+ln -sf libcudart.so.13 "$CU/lib/libcudart.so"
+
+# 指向虚拟环境内的 CUDA 工具链并构建
+export CUDA_HOME="$CU"; export PATH="$CU/bin:$PATH"
+export LD_LIBRARY_PATH="$CU/lib:$LD_LIBRARY_PATH"
+export MAX_JOBS=4                     # 限制并行 nvcc 数，防内存爆
+pip install . --no-build-isolation
+cd ../..</code></pre>
+<p class="small">CUDA 13 需要的两处源码修改（去掉 Volta gencode、给 CUB 3.0 加 <code>LaneId/CTA_SYNC</code> shim）<b>仓库中已经改好</b>，换上游新 checkout 才需重做，详见 <code>kernels/selective_scan/README.md</code>。</p>
+
+<h3>4.4 验证内核</h3>
+<pre><code>cd kernels/selective_scan
+pytest test_selective_scan.py          # 全部 PASS 即内核可用
+cd ../..
+
+# 若 import 时报 libcudart.so.13 缺失，把运行库路径补上：
+CU=$(python -c "import os,nvidia;print(os.path.join(os.path.dirname(nvidia.__file__),'cu13'))")
+export LD_LIBRARY_PATH="$CU/lib:$LD_LIBRARY_PATH"</code></pre>
+</div>
+
+<!-- ===================== 5 权重准备 ===================== -->
+<h2 id="s5"><span class="stepnum">5</span>权重准备</h2>
+<div class="card">
+<h3>5.1 VMamba 预训练骨干（训练必需）</h3>
+<table>
+  <tr><th>文件</th><th>下载渠道（任选其一）</th></tr>
+  <tr><td><code>vssm_base_0229_ckpt_epoch_237.pth</code><br>（VMamba-Base @ ImageNet-1K，237 epoch）</td>
+      <td>Zenodo: <a href="https://zenodo.org/records/14037769">zenodo.org/records/14037769</a> ·
+      Google Drive: <a href="https://drive.google.com/file/d/1kUHSBDoFvFG58EmwWurdSVZd8gyKWYfr/view">1kUHSBDoFvFG58EmwWurdSVZd8gyKWYfr</a> ·
+      百度网盘: <a href="https://pan.baidu.com/s/14_syzqwNnVB8rD3tejEZ4w?pwd=q825">pan.baidu.com/s/14_syzqwNnVB8rD3tejEZ4w</a> 提取码 <code>q825</code></td></tr>
+</table>
+<p>下载后放到任意位置，把 <b>绝对路径</b> 填入 YAML 的 <code>pretrained_weight_path</code>（仓库示例放在 <code>Checkpoints/</code> 或 <code>VMamba/</code> 子目录，注意该相对路径按"仓库上一层目录"解析，建议直接写绝对路径）。</p>
+
+<h3>5.2 官方发布的 Mamba-FCS 成品权重（可直接推理对照，训练可选）</h3>
+<p>Hugging Face：<a href="https://huggingface.co/buddhi19/MambaFCS/tree/main">buddhi19/MambaFCS</a>。仓库内记录的已发布 checkpoint 命名对照：</p>
+<table>
+  <tr><th>数据集</th><th>checkpoint（训练产物命名规则 &lt;iter&gt;_model_&lt;SeK&gt;.pth）</th></tr>
+  <tr><td>SECOND</td><td><code>SECOND_FULL/20000_model_0.253.pth</code>（SeK≈25.3%，与论文 25.50 吻合）</td></tr>
+  <tr><td>Landsat-SCD</td><td><code>LandSat_full/105000_model_0.661.pth</code></td></tr>
+</table>
+<p class="small">训练时最优模型按验证 SeK 保存，文件名自带该次 SeK 值 —— 这也是核对复现是否达标的快速手段。</p>
+</div>
+
+<!-- ===================== 6 数据集 ===================== -->
+<h2 id="s6"><span class="stepnum">6</span>数据集准备</h2>
+<div class="card">
+<div class="callout danger"><b>⛔ 目录布局以源码为准（README 描述与代码不一致，源码核对结论）</b>
+README 里 SECOND 的布局写的是 <code>A/B/labelA/labelB</code>，但 SECOND 实际使用的数据类
+<code>SemanticChangeDetectionDatset</code>（changedetection/datasets/make_data_loader.py）读取的是
+<b><code>T1 / T2 / GT_T1 / GT_T2 / GT_CD</code></b> 五个子目录；只有 Landsat 数据类
+<code>SemanticChangeDetectionDatset_LandSat</code> 才读 <code>A / B / labelA / labelB</code>。请严格按下文布局组织数据，否则会 FileNotFoundError。</div>
+
+<h3>6.1 SECOND（论文主数据集，7 类）</h3>
+<p><b>规模</b>：4662 对 512×512 影像，官方划分 train 2968 对 / test 1696 对。<b>类别</b>（整数标签图，非 RGB）：</p>
+<table>
+  <tr><th>类别 ID</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th></tr>
+  <tr><td>含义</td><td>非变化(背景)</td><td>低矮植被</td><td>不透水面</td><td>树木</td><td>水体</td><td>建筑</td><td>操场</td></tr>
+  <tr><td>官方配色 RGB</td><td>(255,255,255)</td><td>(0,128,0)</td><td>(128,128,128)</td><td>(0,255,0)</td><td>(0,0,255)</td><td>(128,0,0)</td><td>(255,0,0)</td></tr>
+</table>
+<pre><code>SECOND/                       # dataset_root 指向这里
+├── train/
+│   ├── T1/                   # 前期影像
+│   ├── T2/                   # 后期影像
+│   ├── GT_T1/                # T1 整数类别图（单通道, 值 0~6）
+│   ├── GT_T2/                # T2 整数类别图（单通道, 值 0~6）
+│   └── GT_CD/                # 二值变化标签（0 / 255）
+├── test/
+│   ├── T1/  ├── T2/  ├── GT_T1/  ├── GT_T2/  └── GT_CD/
+├── train.txt                 # 每行一个文件名，如 0001.png
+└── test.txt</code></pre>
+<ul>
+  <li>代码读取 <code>GT_CD</code> 后执行 <code>label/255</code>，因此 GT_CD 必须是 <b>0/255 二值图</b>。</li>
+  <li><code>GT_T1/GT_T2</code> 必须是<b>单通道整数类别图</b>。官方 SECOND 原始标签多为彩色图，<b>需先做调色板→整数转换</b>，脚本见下方 6.3。</li>
+  <li><code>train.txt / test.txt</code> 中的文件名在五个子目录中通用（同名不同目录），可由 <code>ls train/T1 &gt; train.txt</code> 生成。</li>
+</ul>
+
+<h3>6.2 Landsat-SCD（5 类）</h3>
+<p><b>规模</b>：1284 对 416×416 影像，官方划分 train 636 / val 322 / test 326。<b>类别</b>：0=非变化 + 4 类地物（水体/裸地/植被/建设用地）。</p>
+<pre><code>Landsat-SCD/                  # dataset_root 指向这里
+├── A/                        # 前期影像
+├── B/                        # 后期影像
+├── labelA/                   # T1 整数类别图（0~4）
+├── labelB/                   # T2 整数类别图（0~4）
+├── train_list.txt
+├── val_list.txt
+└── test_list.txt</code></pre>
+<ul>
+  <li>变化标签不需要单独提供：数据类内部由 <code>(labelA&gt;0)|(labelB&gt;0)</code> 自动生成。</li>
+  <li>官方配置把 <b>train_list 与 val_list 合并用于训练</b>（YAML 的 <code>train_data_list_paths</code> 有两项），test_list 用于验证/评估。</li>
+  <li>同样要求整数类别图；若是调色板图先转换。</li>
+</ul>
+
+<h3>6.3 标签转换脚本（RGB 彩色标签 → 整数类别图）</h3>
+<p>若拿到的 SECOND 标签是彩色图，用官方 notebook 中同款颜色表做反向映射：</p>
+<pre><code>import numpy as np, imageio, os
+from pathlib import Path
+
+color2id = {
+    (255,255,255):0, (0,128,0):1, (128,128,128):2,
+    (0,255,0):3,     (0,0,255):4, (128,0,0):5,   (255,0,0):6,
+}
+
+def convert_folder(src_dir, dst_dir):
+    Path(dst_dir).mkdir(parents=True, exist_ok=True)
+    for name in os.listdir(src_dir):
+        rgb = imageio.imread(os.path.join(src_dir, name))[:, :, :3]
+        out = np.zeros(rgb.shape[:2], np.uint8)
+        for c, i in color2id.items():
+            out[np.all(rgb == np.array(c, np.uint8), axis=-1)] = i
+        imageio.imwrite(os.path.join(dst_dir, name), out)
+
+# 示例：convert_folder('SECOND_raw/train/label1', 'SECOND/train/GT_T1')</code></pre>
+
+<h3>6.4 两个数据集的训练配置差异（已按 YAML 核对）</h3>
+<table>
+  <tr><th>配置项</th><th>SECOND</th><th>Landsat-SCD</th></tr>
+  <tr><td><code>num_classes</code></td><td>7</td><td>5</td></tr>
+  <tr><td><code>crop_size</code></td><td>512</td><td>416</td></tr>
+  <tr><td><code>batch_size</code></td><td>2</td><td>10（YAML 现值；README 声称全部实验 bs=2，见第 13 节差异说明）</td></tr>
+  <tr><td><code>max_iters</code></td><td>800,000</td><td>1,600,000</td></tr>
+  <tr><td>SeK 损失启用时机</td><td>第 0 步即启用</td><td>150,000 步后启用（代码 <code>SEK_START_ITER</code>）</td></tr>
+  <tr><td>列表文件</td><td>train.txt / test.txt</td><td>train_list+val_list 合并训练 / test_list 验证</td></tr>
+</table>
+</div>
+
+<!-- ===================== 7 配置文件详解 ===================== -->
+<h2 id="s7"><span class="stepnum">7</span>配置文件详解</h2>
+<div class="card">
+<p>训练由 YAML 驱动：<code>configs/train_SECOND.yaml</code> 与 <code>configs/train_LANDSAT.yaml</code>。字段含义（与 <code>train.py:_build_args</code> 逐一对应）：</p>
+<table>
+  <tr><th>字段</th><th>必填</th><th>含义与注意</th></tr>
+  <tr><td><code>cfg</code></td><td>✓</td><td>骨干结构配置，固定 <code>MambaFCS/changedetection/configs/vssm1/vssm_base_224.yaml</code>（EMBED_DIM=128, DEPTHS=[2,2,15,2], forward_type=v3noz 等），按"仓库上一层目录"解析</td></tr>
+  <tr><td><code>pretrained_weight_path</code></td><td>✓</td><td>VMamba 预训练权重路径（第 5 节），建议绝对路径</td></tr>
+  <tr><td><code>dataset</code></td><td>✓</td><td><code>SECOND</code> 或 <code>LandSat</code>（决定数据类与 SeK 预热策略，区分大小写）</td></tr>
+  <tr><td><code>dataset_root</code></td><td></td><td>数据根目录；列表文件相对它解析</td></tr>
+  <tr><td><code>train_dataset_path / test_dataset_path</code></td><td>✓</td><td>训练/测试集目录（相对 <code>dataset_root</code> 解析）</td></tr>
+  <tr><td><code>train_data_list_paths / test_data_list_path</code></td><td>✓</td><td>列表文件（可为多个，Landsat 训练即 train+val 两个）</td></tr>
+  <tr><td><code>batch_size / crop_size / max_iters</code></td><td></td><td>见 6.4 表；<code>max_iters</code> 是 DataLoader 迭代步数（数据会循环采样补齐）</td></tr>
+  <tr><td><code>learning_rate / weight_decay</code></td><td></td><td>默认 1e-4 / 5e-4（AdamW）</td></tr>
+  <tr><td><code>num_classes</code></td><td></td><td>语义类别数：SECOND=7、LandSat=5</td></tr>
+  <tr><td><code>model_type / model_param_path / model_saving_name</code></td><td>✓</td><td>模型类型固定 <code>MambaSCD_base</code>；checkpoint 存到 <code>model_param_path/model_saving_name/</code></td></tr>
+  <tr><td><code>cuda / cuda_device</code></td><td></td><td>单卡训练；<code>cuda_device</code> 指定卡号（等价 CUDA_VISIBLE_DEVICES 单卡化）</td></tr>
+  <tr><td><code>resume / optim_path / scheduler_path</code></td><td></td><td>断点续训：三者必须同时提供（模型 / 优化器 / 调度器状态）</td></tr>
+  <tr><td><code>do_validation</code></td><td></td><td>true 时训练结束后再跑一次完整验证</td></tr>
+</table>
+<p class="small">所有字符串字段支持 <code>$ENV</code>/<code>${ENV}</code> 环境变量展开，也可配合仓库根 <code>.env</code> 文件（train.py 会自动尝试加载）。</p>
+</div>
+
+<!-- ===================== 8 训练 ===================== -->
+<h2 id="s8"><span class="stepnum">8</span>训练步骤</h2>
+<div class="card">
+<h3>8.1 启动训练</h3>
+<pre><code>conda activate mambafcs
+cd ~/MambaFCS                      # ★ 必须在 MambaFCS 目录内启动（第 3 节约束）
+
+# ① 先 dry-run 检查路径解析是否全部正确（不加载模型，几秒完成）
+python train.py --config configs/train_SECOND.yaml --dry-run
+
+# ② 正式训练
+python train.py --config configs/train_SECOND.yaml     # SECOND
+python train.py --config configs/train_LANDSAT.yaml    # Landsat-SCD
+
+# ③ 指定其他卡：直接改 YAML 的 cuda_device，或命令行覆盖
+python train.py --config configs/train_SECOND.yaml --opts TRAIN.cuda_device 3</code></pre>
+
+<h3>8.2 后台长跑（tmux + TensorBoard）</h3>
+<pre><code>tmux new -s train_second
+conda activate mambafcs && cd ~/MambaFCS
+python train.py --config configs/train_SECOND.yaml 2>&1 | tee train_second.log
+# Ctrl+B 然后 D 脱离；重连：tmux attach -t train_second
+
+# 另开窗口监控（日志目录见 8.3 说明）
+tensorboard --logdir ~/saved_models --port 6006 --bind_all
+# 浏览器访问 http://&lt;服务器IP&gt;:6006 （注意安全组/防火墙放行）</code></pre>
+
+<h3>8.3 产物位置（源码核对，与直觉不同的路径）</h3>
+<table>
+  <tr><th>产物</th><th>实际位置</th></tr>
+  <tr><td>最优 checkpoint</td><td><code>&lt;model_param_path&gt;/&lt;model_saving_name&gt;/&lt;iter&gt;_model_&lt;SeK&gt;.pth</code><br>如 <code>~/MambaFCS_saved_models/JOURNAL1/SECOND_FULL/20000_model_0.253.pth</code></td></tr>
+  <tr><td>TensorBoard 日志</td><td><code>&lt;仓库上一层目录&gt;/saved_models/&lt;model_saving_name&gt;/logs/</code><br>（train_MambaSCD.py 的 <code>main_dir</code> 指向仓库<b>父目录</b>）</td></tr>
+</table>
+<div class="callout warn"><b>⚠ 路径解析规则（train.py 源码行为）</b>
+<code>cfg / pretrained_weight_path / model_param_path / resume / optim_path / scheduler_path</code> 按"<b>仓库上一层目录</b>"解析相对路径；数据集与列表路径按 <code>dataset_root</code> 解析。因此 YAML 中的相对路径会落到仓库<b>外面</b>（与 README 的 saved_models 描述不同）——<b>建议全部写绝对路径</b>，一劳永逸。</div>
+
+<h3>8.4 训练内部行为（便于判断是否正常）</h3>
+<ul>
+  <li><b>优化器</b>：AdamW（lr=1e-4，wd=5e-4）；<b>调度器</b>：StepLR 每 10000 步 lr 减半。</li>
+  <li><b>损失</b> = 1.0×CE(BCD) + 0.5×[CE(T1)+CE(T2)] + 0.5×[Lovász(BCD/T1/T2)] + 0.05×时序一致性MSE + 0.5×SeK；语义损失只在<b>变化区域</b>内监督（非变化像素置 255 忽略）。SECOND 从第 0 步启用 SeK，LandSat 从 150000 步后启用。</li>
+  <li><b>验证频率</b>：每 5000 步验证一次（&gt;30000 步后加密为每 1000 步）；验证集 batch=1，输出 Kappa / F<sub>SCD</sub> / mIoU / SeK / OA，<b>按 SeK 最优保存权重</b>并写入 TensorBoard。</li>
+  <li><b>每 10 步打印一次</b>各路损失；训练全程吃满单卡约 20+ GB 显存（bs=2, crop=512）。</li>
+  <li><b>断点续训</b>：YAML 同时填 <code>resume</code>（模型权重）、<code>optim_path</code>（optimizer.state_dict）、<code>scheduler_path</code>（scheduler.state_dict），并把 <code>start_iter</code> 设为对应步数。</li>
+  <li><b>尽早拿到可用模型</b>：官方发布的 SECOND 最优出现在 2 万步、Landsat 在 10.5 万步左右，远小于 max_iters —— 复现时可先跑到出现最优 checkpoint 后用其做评估，再决定是否跑满。</li>
+</ul>
+
+<h3>8.5 训练时长参考</h3>
+<p>以 RTX A5000（24 GB）为基准：SECOND（bs=2, crop=512）约 3～4 it/s 量级，80 万 iters 需 3～5 天；Landsat 更长。建议多消融实验用不同 <code>cuda_device</code> 并行（每个消融约占一张卡）。</p>
+</div>
+
+<!-- ===================== 9 推理与评估 ===================== -->
+<h2 id="s9"><span class="stepnum">9</span>推理与评估步骤</h2>
+<div class="card">
+<p>仓库<b>没有独立的 test.py</b>，官方推理/评估/可视化流程封装在交互式 notebook <code>annotations/MambaFCS.ipynb</code> 中。两种方式任选。</p>
+
+<h3>9.1 方式 A：官方 notebook（推荐，含评估 + 逐图可视化 + FLOPs）</h3>
+<ol>
+  <li>在仓库根建 <code>.env</code> 文件，写入路径变量（notebook 用 <code>getPath()</code> 读取）：
+<pre><code>VSSMBASEPATH=/abs/path/vssm_base_0229_ckpt_epoch_237.pth
+SECONDDATASETPATH=/abs/path/SECOND
+LANDSAT=/abs/path/Landsat-SCD</code></pre></li>
+  <li>修改 notebook 中 "If your DATASET is SECOND / LandSAT" 单元：
+    <ul>
+      <li><code>EVAL_DATASET = 'SECOND'</code>（或 'LandSat'）</li>
+      <li><code>SECOND_CHECKPOINT</code> 改成你要评估的 checkpoint 绝对路径（官方权重或你训练的 <code>xxx_model_xxx.pth</code>）</li>
+    </ul></li>
+  <li>逐单元运行，流程为：构建 <code>STMambaSCD</code> → 加载 checkpoint → 遍历测试集 → 输出 <b>Kappa / F<sub>SCD</sub> / OA / mIoU / SeK</b> → 对测试集前 100 张图导出预测与 GT 对比图（<code>annotations/Images/SECOND/</code>）→ thop 统计 MACs/Params。</li>
+  <li>评估协议（与训练脚本 validation 一致）：BCD 分支 argmax 得变化掩码；两期语义 argmax 后<b>非变化区域强制置 0</b>；再由 <code>SCDD_eval_all</code> 汇总指标。</li>
+</ol>
+
+<h3>9.2 方式 B：最小化独立评估脚本（可直接保存为 test_scd.py）</h3>
+<pre><code>import os, sys, torch, numpy as np
+from torch.utils.data import DataLoader
+from MambaFCS.changedetection.configs.config import get_config
+from MambaFCS.changedetection.datasets.make_data_loader import (SemanticChangeDetectionDatset,
+                                                                SemanticChangeDetectionDatset_LandSat)
+from MambaFCS.changedetection.models.STMambaSCD import STMambaSCD
+from MambaFCS.changedetection.utils_func.mcd_utils import accuracy, SCDD_eval_all, AverageMeter
+
+class A: pass
+args = A()
+args.cfg = '/abs/path/MambaFCS/changedetection/configs/vssm1/vssm_base_224.yaml'
+args.opts = None; args.pretrained_weight_path = '/abs/path/vssm_base_0229_ckpt_epoch_237.pth'
+args.dataset = 'SECOND'; args.num_classes = 7; args.crop_size = 256
+args.test_dataset_path = '/abs/path/SECOND/test'
+
+with open('/abs/path/SECOND/test.txt') as f:
+    args.test_data_name_list = [l.strip() for l in f if l.strip()]
+
+config = get_config(args)
+model = STMambaSCD(output_cd=2, output_clf=args.num_classes,
+                   pretrained=args.pretrained_weight_path,
+                   patch_size=config.MODEL.VSSM.PATCH_SIZE, in_chans=config.MODEL.VSSM.IN_CHANS,
+                   num_classes=config.MODEL.NUM_CLASSES, depths=config.MODEL.VSSM.DEPTHS,
+                   dims=config.MODEL.VSSM.EMBED_DIM,
+                   ssm_d_state=config.MODEL.VSSM.SSM_D_STATE, ssm_ratio=config.MODEL.VSSM.SSM_RATIO,
+                   ssm_rank_ratio=config.MODEL.VSSM.SSM_RANK_RATIO,
+                   ssm_dt_rank=("auto" if config.MODEL.VSSM.SSM_DT_RANK=="auto" else int(config.MODEL.VSSM.SSM_DT_RANK)),
+                   ssm_act_layer=config.MODEL.VSSM.SSM_ACT_LAYER, ssm_conv=config.MODEL.VSSM.SSM_CONV,
+                   ssm_conv_bias=config.MODEL.VSSM.SSM_CONV_BIAS, ssm_drop_rate=config.MODEL.VSSM.SSM_DROP_RATE,
+                   ssm_init=config.MODEL.VSSM.SSM_INIT, forward_type=config.MODEL.VSSM.SSM_FORWARDTYPE,
+                   mlp_ratio=config.MODEL.VSSM.MLP_RATIO, mlp_act_layer=config.MODEL.VSSM.MLP_ACT_LAYER,
+                   mlp_drop_rate=config.MODEL.VSSM.MLP_DROP_RATE, drop_path_rate=config.MODEL.DROP_PATH_RATE,
+                   patch_norm=config.MODEL.VSSM.PATCH_NORM, norm_layer=config.MODEL.VSSM.NORM_LAYER,
+                   downsample_version=config.MODEL.VSSM.DOWNSAMPLE, patchembed_version=config.MODEL.VSSM.PATCHEMBED,
+                   gmlp=config.MODEL.VSSM.GMLP, use_checkpoint=config.TRAIN.USE_CHECKPOINT)
+
+ckpt = torch.load('/abs/path/checkpoint.pth', map_location='cuda')
+model.load_state_dict(ckpt); model.cuda().eval()
+
+ds = SemanticChangeDetectionDatset(args.test_dataset_path, args.test_data_name_list, 256, None, 'test')
+loader = DataLoader(ds, batch_size=1, num_workers=4)
+preds_all, labels_all, meter = [], [], AverageMeter()
+with torch.no_grad():
+    for pre, post, lcd, lt1, lt2, _ in loader:
+        out_cd, out_t1, out_t2 = model(pre.cuda(), post.cuda())
+        cm  = torch.argmax(out_cd, dim=1).cpu().numpy()
+        pA  = torch.argmax(out_t1, dim=1).cpu().numpy(); pA[cm == 0] = 0
+        pB  = torch.argmax(out_t2, dim=1).cpu().numpy(); pB[cm == 0] = 0
+        lA, lB = lt1.numpy(), lt2.numpy()
+        for a, b, la, lb in zip(pA, pB, lA, lB):
+            s1, n1 = accuracy(a, la); s2, n2 = accuracy(b, lb)
+            meter.update((s1 + s2) * 0.5)
+            preds_all += [a, b]; labels_all += [la, lb]
+
+kappa, fscd, miou, sek = SCDD_eval_all(preds_all, labels_all, 37)
+print(f'Kappa={kappa:.4f} Fscd={fscd:.4f} OA={meter.avg:.4f} mIoU={miou:.4f} SeK={sek:.4f}')</code></pre>
+<p class="small">单图纯推理（无标签）：参照 notebook 的 <code>annotate_image_SECOND()</code>——读入 T1/T2 → <code>imutils.normalize_img</code>（ImageNet 均值方差）→ 前向 → argmax → 变化区域外的语义置 0 → 用 6.1 节颜色表上色保存。</p>
+</div>
+
+<!-- ===================== 10 消融实验 ===================== -->
+<h2 id="s10"><span class="stepnum">10</span>消融实验步骤</h2>
+<div class="card">
+<p>仓库 <code>annotations/</code> 提供了与论文消融一一对应的 5 个 notebook（加载<b>消融版 checkpoint</b> 做"指标复评 + 定性可视化"）。消融模型本身需要先按下面的代码改动点训练：</p>
+<table>
+  <tr><th>消融项</th><th>notebook</th><th>训练时的代码改动（唯一改动点）</th></tr>
+  <tr><td><b>w/o JSF（去空频融合）</b></td><td><code>MambaFCS_wo_FFT.ipynb</code></td><td><code>ChangeDecoder.py</code>：把各级 <code>FFT_Fusion</code> 替换为纯空间融合（官方消融 checkpoint 目录名即 <code>..._without_freq_...</code>）。最简单做法：在 <code>GuidedFusion.FFT_Fusion.forward</code> 里去掉 FFTBranch 分支，仅保留 <code>[pre, post]</code> 拼接过 <code>reduce_conv</code>（注意输入通道数相应从 5C 改 2C）</td></tr>
+  <tr><td><b>w/o CGA（去变化引导）</b></td><td><code>MambaFCS_wo_CGA.ipynb</code></td><td><code>SemanticDecoder.py</code>：把每级开头的 <code>ChangeGuidedAttention()(feat, change_map)</code> 改为恒等映射 <code>feat</code>（即不做 ×sigmoid 门控）</td></tr>
+  <tr><td><b>w/o SeK（去指标损失）</b></td><td><code>MambaFCS_wo_SeK.ipynb</code></td><td><code>script/train_MambaSCD.py</code>：损失权重 <code>weights['sek'] = 0</code>（或把 <code>SEK_START_ITER</code> 设成大于 max_iters）</td></tr>
+  <tr><td><b>BCD 任务对照</b>（LEVIR-CD+ / SYSU / WHU 二元变化检测，非 SCD 消融）</td><td><code>MambaFCS_BCD2.ipynb</code></td><td>用 <code>MambaBCD.py → STMambaBCD</code> 模型 + <code>ChangeDetectionDatset</code>（T1/T2/GT 布局）训练，流程同上</td></tr>
+</table>
+
+<h3>10.1 消融标准流程（以 w/o SeK 为例）</h3>
+<pre><code># ① 改代码：train_MambaSCD.py 中 weights = {'sek': 0, ...}（两处，含热启动分支）
+# ② 改 YAML：只改输出名，其余超参不动，保证与主实验可比
+model_param_path:  /abs/path/MambaFCS_saved_models
+model_saving_name: SECOND_wo_SeK
+# ③ 训练
+python train.py --config configs/train_SECOND.yaml
+# ④ 评估 + 可视化：打开对应 notebook，把 CHECKPOINT 指向消融产物，逐单元运行
+#    （SECOND 的三个消融 notebook 内已预设 SAVE_IMGS_PATH = annotations/Images/{CGA,FFT,...}/）</code></pre>
+
+<h3>10.2 消融注意事项</h3>
+<ul>
+  <li>消融实验均在 <b>SECOND</b> 上进行（论文消融表），超参、迭代数、随机策略与主实验保持一致，唯一变量是消融模块；</li>
+  <li>改模型结构（wo_FFT / wo_CGA）后<b>不能</b>加载主实验 checkpoint，必须从 VMamba 预训练重新训练；改损失（wo_SeK）同样重训；</li>
+  <li>notebook 中官方消融 checkpoint 的目录命名保留了训练变体信息（如 <code>SECOND_without_dice_without_DIFF_without_freq_2/</code>），可据此对齐论文表格行；</li>
+  <li>每个消融约占一张 24 GB 卡，建议 <code>cuda_device</code> 分开并行跑。</li>
+</ul>
+
+<h3>10.3 顺带可做的分析实验（analyze/ 目录）</h3>
+<table>
+  <tr><th>脚本</th><th>用途</th></tr>
+  <tr><td><code>analyze/get_flops.py</code></td><td>FLOPs / 参数量（fvcore 与 mmengine 双后端，已挂 SelectiveScan 自定义算子钩子）</td></tr>
+  <tr><td><code>analyze/tp.py</code></td><td>单卡吞吐量基准（50 次预热 + 30 次计时前向）</td></tr>
+  <tr><td><code>analyze/get_erf.py</code></td><td>有效感受野（ERF）热力图（需 ImageNet val 目录）</td></tr>
+  <tr><td><code>analyze/get_scaleup.py</code> / <code>scaleup_show.py</code></td><td>分辨率缩放实验（64~1120 零微调验证）与精度-分辨率曲线</td></tr>
+  <tr><td><code>annotations/MambaFCS.ipynb</code> 内 thop 单元</td><td>直接对 SCD 整网统计 MACs / Params（输入 1×3×512×512 ×2）</td></tr>
+</table>
+</div>
+
+<!-- ===================== 12 预期结果 ===================== -->
+<h2 id="s12"><span class="stepnum">12</span>预期结果对照（论文指标）</h2>
+<div class="card">
+<table>
+  <tr><th>模型</th><th>数据集</th><th>OA (%)</th><th>F<sub>SCD</sub> (%)</th><th>mIoU (%)</th><th>SeK (%)</th></tr>
+  <tr><td>SCanNet（对比法）</td><td>SECOND</td><td>87.86</td><td>63.66</td><td>73.42</td><td>23.94</td></tr>
+  <tr><td>ChangeMamba（对比法）</td><td>SECOND</td><td>88.12</td><td>64.03</td><td>73.68</td><td>24.11</td></tr>
+  <tr><td><b>Mamba-FCS</b></td><td><b>SECOND</b></td><td><b>88.62</b></td><td><b>65.78</b></td><td><b>74.07</b></td><td><b>25.50</b></td></tr>
+  <tr><td>SCanNet（对比法）</td><td>Landsat-SCD</td><td>96.04</td><td>85.62</td><td>86.37</td><td>52.63</td></tr>
+  <tr><td>ChangeMamba（对比法）</td><td>Landsat-SCD</td><td>96.08</td><td>86.61</td><td>86.91</td><td>53.66</td></tr>
+  <tr><td><b>Mamba-FCS</b></td><td><b>Landsat-SCD</b></td><td><b>96.25</b></td><td><b>89.27</b></td><td><b>88.81</b></td><td><b>60.26</b></td></tr>
+</table>
+<div class="callout ok"><b>✓ 复现达标判据</b>
+直接加载官方 HuggingFace 权重评估，指标应与上表基本一致（±0.3% 内）。自行训练时，因代码未固定随机种子且含随机增强/裁剪，各指标常见 ±0.5% 波动；训练日志/权重文件名里的 SeK 值是快速核对点（如官方 SECOND 产物 <code>20000_model_0.253.pth</code> → SeK 25.3% ≈ 论文 25.50）。</div>
+</div>
+
+<!-- ===================== 13 常见问题 ===================== -->
+<h2 id="s13"><span class="stepnum">13</span>常见问题与踩坑清单（源码核对汇总）</h2>
+<div class="card">
+<ol>
+  <li><b>内核编译 <code>No module named 'torch'</code></b> —— 忘加 <code>--no-build-isolation</code>（第 4.1 节）。</li>
+  <li><b>nvcc 与 torch CUDA 大版本不一致</b>导致构建中止 —— 对照 <code>torch.version.cuda</code> 与 <code>nvcc --version</code>；无 root 用 4.3 节虚拟环境内 toolkit 方案。</li>
+  <li><b>显卡架构不匹配</b>（如 RTX 4090=sm_89，默认 gencode 只有 80/86）—— 编译前改 <code>setup.py</code> 的 <code>-gencode</code>（第 4.2 节）。</li>
+  <li><b><code>pip install -r requirements.txt</code> 失败</b> —— 清单里的 <code>cv2</code> 包名不存在，替换为 <code>opencv-python</code>；并补装 <code>einops tqdm pyyaml python-dotenv thop</code>。</li>
+  <li><b><code>ModuleNotFoundError: No module named 'MambaFCS'</code></b> —— 克隆目录没叫 <code>MambaFCS</code>，或不在该目录内启动训练（第 3.2 节硬约束）。</li>
+  <li><b>SECOND 数据找不到文件</b> —— README 写的 A/B/labelA/labelB 与 SECOND 数据类实际读取的 T1/T2/GT_T1/GT_T2/GT_CD 不一致，按第 6.1 节布局组织。</li>
+  <li><b>标签类别错乱 / 指标异常偏低</b> —— 标签用了 RGB 彩色图；必须转成单通道整数类别图，GT_CD 为 0/255 二值（第 6.3 节脚本）。</li>
+  <li><b>checkpoint / TensorBoard 落盘位置与 README 不符</b> —— 相对路径按"仓库上一层目录"解析（第 8.3 节）；建议 YAML 全用绝对路径。</li>
+  <li><b>resume 报错缺 optim/scheduler</b> —— 续训必须同时给 <code>resume + optim_path + scheduler_path</code>。</li>
+  <li><b>batch_size 差异</b> —— README 声明"全部实验 batchsize=2"，但随仓库的 <code>train_LANDSAT.yaml</code> 为 <code>batch_size: 10, crop_size: 416</code>。忠实复现论文建议以 README（bs=2）为准做敏感性对照，或按 YAML 现值复现作者实际产物（Landsat 官方 checkpoint 由该配置训出）。</li>
+  <li><b>显存不足 OOM</b> —— bs=2×crop512 约 20+ GB；不足时可减 batch 并等比降 lr，或换 crop 416。多卡并行时每张卡跑一个独立进程（改 <code>cuda_device</code>），代码本身是单卡训练，无 DDP。</li>
+  <li><b>import 内核报 <code>libcudart.so.13: cannot open shared object file</code></b> —— 按第 4.4 节补 <code>LD_LIBRARY_PATH</code>。</li>
+  <li><b>训练很慢</b> —— 确认 <code>nvidia-smi</code> 中进程在 GPU 上、数据在本地盘（NFS 挂载会拖垮 num_workers=16 的读取）；首次验证（5000 步）之前只有日志滚动属正常。</li>
+</ol>
+</div>
+
+<!-- ===================== 14 检查清单 ===================== -->
+<h2 id="s14"><span class="stepnum">14</span>最终检查清单</h2>
+<div class="card">
+<ul class="checklist">
+  <li><input type="checkbox"> Linux 服务器 + ≥24 GB 显存 GPU，驱动正常（nvidia-smi）</li>
+  <li><input type="checkbox"> conda 环境 mambafcs（python 3.10）+ torch（CUDA 构建可用）+ 全部依赖（含 opencv-python/einops/tqdm/pyyaml/dotenv/thop）</li>
+  <li><input type="checkbox"> setup.py gencode 与本机 GPU 架构匹配</li>
+  <li><input type="checkbox"> <code>kernels/selective_scan</code> 以 --no-build-isolation 编译成功，<code>pytest test_selective_scan.py</code> 通过</li>
+  <li><input type="checkbox"> 代码目录名为 MambaFCS，训练在目录内启动；长任务运行于 tmux</li>
+  <li><input type="checkbox"> VMamba 预训练权重 <code>vssm_base_0229_ckpt_epoch_237.pth</code> 就位，YAML 内为绝对路径</li>
+  <li><input type="checkbox"> （可选）官方 HuggingFace 权重下载，先用 notebook 跑通评估基线</li>
+  <li><input type="checkbox"> SECOND/Landsat 数据按第 6 节布局就位，标签为整数类别图，列表文件生成</li>
+  <li><input type="checkbox"> <code>python train.py --config ... --dry-run</code> 输出的路径全部正确</li>
+  <li><input type="checkbox"> 训练正常：日志滚动、TensorBoard 有曲线、每 5000 步出现验证指标并保存最优</li>
+  <li><input type="checkbox"> 评估指标与第 12 节对照（±0.5% 内视为复现成功）</li>
+  <li><input type="checkbox"> 消融：wo_FFT / wo_CGA / wo_SeK 三个改动点分别落实并重训，notebook 复评 + 可视化导出</li>
+</ul>
+</div>
+
+<!-- ===================== 附录 ===================== -->
+<h2 id="s15">附录：仓库结构与关键文件</h2>
+<div class="card">
+<pre><code>MambaFCS/
+├── train.py                          # ★ 训练入口：解析 YAML → train_MambaSCD.Trainer
+├── requirements.txt                  # 依赖（注意 cv2 需换 opencv-python，且不全）
+├── configs/
+│   ├── train_SECOND.yaml             # SECOND 训练配置（bs2/crop512/800k iters/7类）
+│   └── train_LANDSAT.yaml            # Landsat 配置（bs10/crop416/1.6M iters/5类）
+├── changedetection/
+│   ├── models/
+│   │   ├── STMambaSCD.py             # SCD 总装配（共享编码器+BCD解码器+2×语义解码器+3分类头）
+│   │   ├── Mamba_backbone.py         # VMamba 骨干封装（4 级特征输出）
+│   │   ├── ChangeDecoder.py          # BCD 解码器（JSF 金字塔，产出 change_maps）
+│   │   ├── SemanticDecoder.py        # 语义解码器（CGA 金字塔）×2
+│   │   ├── GuidedFusion.py           # ★ FFT_Fusion(JSF) / PyramidFusion（消融 wo_FFT 改这里）
+│   │   ├── MultiScaleChangeGuidedAttention.py   # CGA 实现
+│   │   ├── MambaBCD.py               # BCD-only 变体（BCD2 实验）
+│   │   ├── ResBlockSe.py             # 残差+SE 模块
+│   │   └── ARCHITECTURE.md           # ★ 中文架构导读（强烈建议先读）
+│   ├── script/train_MambaSCD.py      # ★ 训练循环：5 路损失/验证/保存（消融 wo_SeK 改这里）
+│   ├── datasets/make_data_loader.py  # ★ 数据类：SECOND=T1/T2/GT_*，LandSat=A/B/label*
+│   ├── configs/vssm1/vssm_base_224.yaml   # 骨干结构配置
+│   └── utils_func/{loss,lovasz_loss,mcd_utils,metrics,imutils,eval_segm}.py
+├── kernels/selective_scan/           # ★ CUDA 内核（setup.py + CUDA13 说明 README）
+├── annotations/
+│   ├── MambaFCS.ipynb                # ★ 推理/评估/可视化/标注主 notebook
+│   ├── MambaFCS_wo_FFT.ipynb         # 消融评估：去空频融合
+│   ├── MambaFCS_wo_CGA.ipynb         # 消融评估：去变化引导
+│   ├── MambaFCS_wo_SeK.ipynb         # 消融评估：去 SeK 损失
+│   └── MambaFCS_BCD2.ipynb           # BCD 任务对照（LEVIR-CD+/SYSU/WHU）
+├── analyze/                          # 分析工具：FLOPs/吞吐/ERF/分辨率缩放等
+├── classification/                   # VMamba 骨干源码（SS2D/VSSBlock）与分类预训练代码
+└── docs/full_architecture.png        # 架构图</code></pre>
+<p class="small">参考资料：论文 IEEE JSTARS 2026 / arXiv:2508.08232 · 项目主页 buddhi19.github.io/MambaFCS · 上游工程 VMamba（MzeroMiko）与 ChangeMamba（ChenHongruixuan）。遇到复现误差，官方建议在 GitHub 提 issue。</p>
+</div>
+
+<footer>Mamba-FCS 复现流程报告 · 基于仓库源码逐文件核对生成 · 2026-09-12</footer>
+</main>
+</div>
+</body>
+</html>
