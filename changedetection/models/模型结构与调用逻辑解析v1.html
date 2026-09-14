@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mamba-FCS · changedetection/models 结构与调用逻辑解析</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#24292f; --muted:#57606a;
+    --accent:#0969da; --accent-dark:#0550ae; --bd:#d8dee4;
+    --code-bg:#0d1117; --code-ink:#e6edf3; --soft:#eef2f6;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);line-height:1.8;
+       font-family:"Segoe UI","Microsoft YaHei","PingFang SC",system-ui,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:36px 24px 100px}
+  header.hero{background:linear-gradient(135deg,#0b3c5d 0%,#0969da 60%,#0d8a6a 100%);
+              color:#fff;border-radius:14px;padding:34px 38px;margin-bottom:26px}
+  header.hero h1{margin:0 0 8px;font-size:26px;letter-spacing:.5px}
+  header.hero p{margin:4px 0;opacity:.92;font-size:14.5px;max-width:860px}
+  .badge{display:inline-block;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);
+         border-radius:20px;padding:1px 13px;font-size:12.5px;margin:10px 6px 0 0}
+  nav.toc{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px 24px;margin:0 0 10px}
+  nav.toc h3{margin:0 0 8px;font-size:15px;color:var(--accent-dark)}
+  nav.toc a{display:inline-block;color:var(--accent);text-decoration:none;font-size:13.5px;
+            margin:3px 14px 3px 0;border-bottom:1px dashed transparent}
+  nav.toc a:hover{border-bottom-color:var(--accent)}
+  h2{font-size:22px;margin:52px 0 6px;padding-bottom:8px;border-bottom:3px solid var(--accent);color:#0b3c5d}
+  h2 .num{display:inline-block;background:var(--accent);color:#fff;border-radius:8px;
+          padding:0 11px;font-size:16px;margin-right:10px;vertical-align:2px}
+  h3{font-size:17.5px;margin:30px 0 8px;color:#0b3c5d}
+  h4{font-size:15.5px;margin:22px 0 6px;color:#1a4d6e}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:20px 26px;margin:16px 0}
+  .callout{border-radius:10px;padding:13px 18px;margin:14px 0;border-left:5px solid;font-size:14.5px}
+  .callout.info{background:#e8f1fb;border-color:var(--accent)}
+  .callout.warn{background:#fff7e6;border-color:#f0b429}
+  .callout b:first-child{display:block;margin-bottom:3px}
+  p code,li code,td code,h4 code{background:var(--soft);border:1px solid #d7dee5;border-radius:5px;
+       padding:1px 6px;font-size:13px;color:#b34700;font-family:Consolas,Menlo,monospace}
+  pre{background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:16px 18px;
+      overflow-x:auto;font-size:13px;line-height:1.65;font-family:Consolas,"JetBrains Mono",Menlo,monospace;margin:14px 0}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit}
+  .star{color:#e3b341;font-weight:700}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;background:#fff}
+  th{background:#0b3c5d;color:#fff;text-align:left;padding:9px 12px;font-weight:600}
+  td{border:1px solid var(--bd);padding:8px 12px;vertical-align:top}
+  tr:nth-child(even) td{background:#f4f8fb}
+  .small{font-size:12.5px;color:var(--muted)}
+  .sep{border:none;border-top:1px dashed var(--bd);margin:26px 0}
+  footer{margin-top:70px;color:var(--muted);font-size:12.5px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>Mamba-FCS · changedetection/models 结构与调用逻辑解析</h1>
+  <p>覆盖 <code style="background:rgba(255,255,255,.15);border:none;color:#fff">changedetection/models/</code> 全部 8 个文件的职责、
+     ChangeDecoder 的逐层级调用逻辑，以及 encoder / SemanticDecoder / 分类头三层各自独立的层级拆解。</p>
+  <span class="badge">SCD 总模型</span><span class="badge">VMamba 骨干</span><span class="badge">JSF 空频融合</span><span class="badge">CGA 变化引导</span>
+</header>
+
+<nav class="toc">
+  <h3>📑 目录</h3>
+  <a href="#s0">0 · 目录总览与调用关系</a>
+  <a href="#s1">1 · ChangeDecoder 逐层级解析</a>
+  <a href="#s2">2 · encoder = Backbone_VSSM</a>
+  <a href="#s3">3 · decoder_T1 = SemanticDecoder</a>
+  <a href="#s4">4 · 分类头 PyramidFusion</a>
+  <a href="#s5">5 · 值得注意的点</a>
+</nav>
+
+<!-- ================================================================ -->
+<h2 id="s0"><span class="num">0</span>目录总览与调用关系</h2>
+
+<div class="card">
+<h3>0.1 文件清单与角色定位</h3>
+<table>
+  <tr><th style="width:34%">文件</th><th>角色</th><th style="width:26%">被谁调用</th></tr>
+  <tr><td><code>STMambaSCD.py</code></td><td><b>总装配入口</b>（语义变化检测 SCD 全模型）</td><td><code>script/train_MambaSCD.py</code></td></tr>
+  <tr><td><code>MambaBCD.py</code></td><td>备用入口（纯二元变化检测 BCD 简化版）</td><td><code>script/train_MambaBCD.py</code></td></tr>
+  <tr><td><code>Mamba_backbone.py</code></td><td>共享编码器 <code>Backbone_VSSM</code>（VMamba 骨干改造）</td><td>两个总模型</td></tr>
+  <tr><td><code>ChangeDecoder.py</code></td><td>BCD 解码器（空频融合金字塔 + 变化图产出）</td><td>两个总模型</td></tr>
+  <tr><td><code>SemanticDecoder.py</code></td><td>SCD 语义解码器（变化引导）</td><td>仅 <code>STMambaSCD</code></td></tr>
+  <tr><td><code>MultiScaleChangeGuidedAttention.py</code></td><td>CGA 变化引导注意力（3 个变体，只用第 3 个）</td><td>仅 <code>SemanticDecoder</code></td></tr>
+  <tr><td><code>GuidedFusion.py</code></td><td>融合工具箱（JSF 空频融合 / 金字塔融合 / CBAM）</td><td>两个解码器 + 分类头</td></tr>
+  <tr><td><code>ResBlockSe.py</code></td><td><code>ResBlock</code>（残差块内嵌 SE 通道注意力）</td><td>两个解码器的平滑层</td></tr>
+</table>
+<p class="small">外部依赖：<code>MambaFCS/classification/models/vmamba.py</code> 提供 <code>VSSM</code>、<code>VSSBlock</code>、<code>LayerNorm2d</code>、<code>Permute</code>（Mamba 选择性扫描的核心实现，不在本目录内）。</p>
+</div>
+
+<div class="card">
+<h3>0.2 四个组件的装配关系与数据流</h3>
+<p><code>STMambaSCD</code> 构造时注册四个组件：</p>
+<pre><code>encoder      = Backbone_VSSM          # ① T1/T2 权重共享, 输出 4 级特征
+decoder_bcd  = ChangeDecoder          # ② 双时相输入, 产出变化图
+decoder_T1   = SemanticDecoder        # ③ 结构同、参数独立
+decoder_T2   = SemanticDecoder        #    二者共用同一份 change_maps
+main_clf_cd  = PyramidFusion(128→2)   # ④ BCD 分类头
+aux_clf      = PyramidFusion(128→C)   #    T1/T2 共用的语义分类头</code></pre>
+<p><code>forward(pre_data, post_data)</code> 的数据流（尺寸按 <code>dims=[128,256,512,1024]</code>）：</p>
+<pre><code>pre_data ─┐
+          ├─► encoder 各跑一遍 ─► pre_features / post_features
+post_data ┘                       [(B,128,H/4),(B,256,H/8),(B,512,H/16),(B,1024,H/32)]
+
+①► ChangeDecoder(pre, post)
+      每级: FFT_Fusion(JSF空频融合) → VSSBlock(Mamba时空建模)
+      金字塔自上而下: p4→p3→p2→p1 (upsample_add + ResBlock平滑 + VSSBlock)
+      返回 (p1, change_maps=[p4,p3,p2,p1] 粗→细)
+
+②► change_maps[::-1] 反转成细→粗, 与 feat_1~feat_4 尺度一一对应
+
+③► decoder_T1(pre_features, change_maps)  ┐ 每级: CGA(特征×sigmoid(变化图))
+    decoder_T2(post_features, change_maps)┘      → VSSBlock → ResBlock → PyramidFusion下采样
+    各返回 (B,128,H/4,W/4)
+
+④► main_clf_cd(p1) → output_bcd  (B,2,H,W)
+    aux_clf(T1/T2输出) → output_T1/output_T2 (B,C,H,W)
+    三个输出统一 F.interpolate 双线性上采样回原图尺寸</code></pre>
+<p class="small">衔接关键：<code>STMambaSCD.py:149</code> 的 <code>change_maps[::-1]</code> —— ChangeDecoder 按粗→细产出，SemanticDecoder 按细→粗消费。BCD 分支的产出 change_maps 是 SCD 分支的引导输入，这是两个分支之间的"暗线"。</p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s1"><span class="num">1</span>ChangeDecoder —— BCD 解码器逐层级解析</h2>
+
+<p>以下按典型配置讲解：<code>encoder_dims=[128,256,512,1024]</code>（由 EMBED_DIM 翻倍推出），输入影像 <code>(B,3,H,W)</code>，<code>channel_first=True</code>（默认 <code>ln2d</code> 配置）。</p>
+
+<div class="card">
+<h3>1.1 构造函数：零件清单</h3>
+<p><code>ChangeDecoder.__init__</code> 注册 4 组零件，全部按<b>由粗到细</b>的方向组织：</p>
+<table>
+  <tr><th>组件</th><th>实例</th><th>作用层级</th><th>通道数</th></tr>
+  <tr><td rowspan="4">JSF 空频融合 ×4</td><td><code>fuse_layer_1</code></td><td>最粗级 1/32</td><td>1024</td></tr>
+  <tr><td><code>fuse_layer_2</code></td><td>1/16</td><td>512</td></tr>
+  <tr><td><code>fuse_layer_3</code></td><td>1/8</td><td>256</td></tr>
+  <tr><td><code>fuse_layer_4</code></td><td>最细级 1/4</td><td>128</td></tr>
+  <tr><td rowspan="4">VSSBlock ×4</td><td><code>st_block_41</code></td><td>最粗级</td><td>1024</td></tr>
+  <tr><td><code>st_block_31</code></td><td>1/16</td><td>512</td></tr>
+  <tr><td><code>st_block_21</code></td><td>1/8</td><td>256</td></tr>
+  <tr><td><code>st_block_11</code></td><td>最细级</td><td>128</td></tr>
+  <tr><td rowspan="3">PyramidFusion ×3</td><td><code>down_sample_1</code></td><td>粗→细过渡</td><td>1024→512</td></tr>
+  <tr><td><code>down_sample_2</code></td><td></td><td>512→256</td></tr>
+  <tr><td><code>down_sample_3</code></td><td></td><td>256→128</td></tr>
+  <tr><td>ResBlock ×3</td><td><code>smooth_layer_3/2/1</code></td><td>1/16、1/8、1/4 级</td><td>各级等宽</td></tr>
+</table>
+<div class="callout warn"><b>⚠ 命名陷阱</b>
+<code>fuse_layer_1</code> 配对的是 <code>pre_feat_4</code>（最粗级），不是 feat_1。<code>st_block_41</code> 的第一个下标 <code>4</code> 表示编码器 stage 4（最粗），第二个下标 <code>1</code> 无含义、纯风格命名。</div>
+<p>每个 <code>st_block_*</code> 都是三层包裹：</p>
+<pre><code>nn.Sequential(
+    Permute(0,2,3,1) if not channel_first else nn.Identity(),  # LN时才需要转置
+    VSSBlock(hidden_dim=..., drop_path=0.1, ...),
+    Permute(0,3,1,2) if not channel_first else nn.Identity(),
+)</code></pre>
+<p class="small">默认 <code>ln2d</code> 配置下两个 Permute 都是 <code>Identity</code>，直接进出 <code>(B,C,H,W)</code>。</p>
+</div>
+
+<div class="card">
+<h3>1.2 forward 入口拆包</h3>
+<pre><code>pre_feat_1, pre_feat_2, pre_feat_3, pre_feat_4 = pre_features
+# feat_1: (B,128,H/4,W/4) 最细 ← feat_4: (B,1024,H/32,W/32) 最粗</code></pre>
+</div>
+
+<div class="card">
+<h3>1.3 Stage I —— 最粗级（1/32，1024 通道）</h3>
+<p>金字塔的"起点"，没有粗先验可加，只有两步：</p>
+<pre><code>p4 = self.fuse_layer_1(pre_feat_4, post_feat_4)   # ① JSF 空频融合
+p4 = self.st_block_41(p4)                          # ② Mamba 时空建模
+p4_attention = p4                                  # ③ 存为最粗变化图
+p4 = self.down_sample_1(p4)                        # ④ 通道降维 1024→512，传给下一级</code></pre>
+
+<h4>① <code>FFT_Fusion(1024)</code> 内部（GuidedFusion.py:316-338），5 路拼接</h4>
+<pre><code>输入: pre (B,1024,h,w), post (B,1024,h,w)，记 h=H/32
+
+1. pre_freq  = fft_pre(pre)    # FFTBranch: torch.fft.fft2 → log1p(|幅度谱|) → 1x1投影+BN+ReLU
+2. post_freq = fft_post(post)  # 同上
+3. cat = [pre, pre_freq, post, post_freq, |pre−post|]   # 1024×5 = 5120 通道
+4. reduce_conv(1x1) + BN + ReLU:  5120 → 1024
+5. ch_gate (ECA通道门控): GAP → 1D卷积 → sigmoid → 逐通道加权
+6. sp_gate (空间门控): 通道max+avg → 7x7conv → sigmoid → 逐像素加权
+输出: (B,1024,h,w)</code></pre>
+<div class="callout info"><b>ℹ 源码细节</b>
+<code>forward</code> 里先拼了一次 <code>[pre, post]</code>，开了 FFT 分支后又<b>重新</b>拼 <code>[pre, pre_freq, post, post_freq]</code> 覆盖掉，第一次拼接实际是无效操作。</div>
+
+<h4>② <code>st_block_41</code> 内部（VSSBlock，vmamba.py:1349）</h4>
+<pre><code>x + DropPath(SS2D(norm(x))) + DropPath(MLP(norm2(x)))</code></pre>
+<p><code>SS2D</code> 是 2D 选择性扫描：特征展平成序列后沿 4 个方向（交叉扫描）做 Mamba 线性复杂度的时序建模，在这里承担<b>双时相融合特征的空间上下文建模</b>。norm 是 LayerNorm2d（按配置）。</p>
+
+<h4>④ <code>down_sample_1 = PyramidFusion(1024→512)</code>（GuidedFusion.py:108-128）</h4>
+<pre><code>b1 = Conv1x1(1024→512)+BN+ReLU          # 逐像素分支
+b3 = Conv3x3(1024→512)+BN+ReLU          # 小感受野
+b5 = DWConv5x5 → Conv1x1(→512)+BN+ReLU  # 大感受野（深度可分离）
+cat[b1,b3,b5] (1536ch)
+→ ChannelAttention: avg+max池化 → 共享FC → sigmoid → 通道加权
+→ SpatialAttention: 7x7conv → sigmoid → 空间加权
+→ final_conv 1x1: 1536→512
++ shortcut(Conv1x1 1024→512)            # 残差
+输出: (B,512,h,w)</code></pre>
+<div class="callout warn"><b>⚠ 关键认知</b>
+<code>PyramidFusion</code> <b>不改空间分辨率</b>，"下采样"只指通道减半。分辨率从 1/32 升到 1/16 是在下一级的 <code>_upsample_add</code> 里完成的。</div>
+</div>
+
+<div class="card">
+<h3>1.4 Stage II —— 1/16，512 通道（完整五步流水线）</h3>
+<pre><code>p3 = self.fuse_layer_2(pre_feat_3, post_feat_3)   # ① JSF 融合 → (B,512,H/16,W/16)
+p3 = self._upsample_add(p4, p3)                    # ② 注入粗先验
+p3 = self.smooth_layer_3(p3)                       # ③ ResBlock+SE 平滑
+p3 = self.st_block_31(p3)                          # ④ VSSBlock 时空建模
+p3_attention = p3                                  # ⑤ 存变化图
+p3 = self.down_sample_2(p3)                        # ⑥ 512→256</code></pre>
+
+<h4>② <code>_upsample_add(p4, p3)</code>（ChangeDecoder.py:108-111）—— 金字塔融合的核心一步</h4>
+<pre><code>_, _, H, W = y.size()                              # y = p3, (B,512,H/16,W/16)
+return F.interpolate(x, size=(H, W), mode='bilinear') + y
+# p4 (B,512,H/32,W/32) 双线性放大 2 倍 → 与 p3 逐元素相加</code></pre>
+<p>此时 <code>p4</code> 已经是 512 通道（上一级 <code>down_sample_1</code> 的产物），所以<b>通道对齐靠 PyramidFusion，分辨率对齐靠 interpolate</b>，两者分工明确。这一步把最粗级的全局变化语义以"加法 skip"的形式灌进本级。</p>
+
+<h4>③ <code>smooth_layer_3 = ResBlock(512,512,stride=1)</code>（ResBlockSe.py:32-52）</h4>
+<pre><code>out = Conv3x3+BN+ReLU → Conv3x3+BN
+out = SE(out)          # SE通道注意力插在残差路径上（注意是在 +identity 之前）
+out += identity        # 等宽等 stride，identity 就是原始输入
+out = ReLU(out)</code></pre>
+<p class="small">SE 在 <code>+identity</code> <b>之前</b>意味着恒等分支加回来的是未经 SE 的原特征——这是标准 ResNet+SE 写法的一个变体（原版 SE-Network 也是这么插的）。</p>
+</div>
+
+<div class="card">
+<h3>1.5 Stage III —— 1/8，256 通道</h3>
+<p>与 Stage II 完全同构，只是换了实例和通道：</p>
+<pre><code>p2 = self.fuse_layer_3(pre_feat_2, post_feat_2)   # FFT_Fusion(256) → (B,256,H/8,W/8)
+p2 = self._upsample_add(p3, p2)                    # p3 已被 down_sample_2 降到 256ch
+p2 = self.smooth_layer_2(p2)                       # ResBlock(256)
+p2 = self.st_block_21(p2)                          # VSSBlock(256)
+p2_attention = p2
+p2 = self.down_sample_3(p2)                        # 256→128</code></pre>
+</div>
+
+<div class="card">
+<h3>1.6 Stage IV —— 最细级（1/4，128 通道）</h3>
+<p>流程同 Stage II/III，但<b>没有第⑥步</b>——已到最细分辨率，不再下采样：</p>
+<pre><code>p1 = self.fuse_layer_4(pre_feat_1, post_feat_1)   # FFT_Fusion(128) → (B,128,H/4,W/4)
+p1 = self._upsample_add(p2, p1)                    # p2 已是 128ch，放大 2 倍相加
+p1 = self.smooth_layer_1(p1)                       # ResBlock(128)
+p1 = self.st_block_11(p1)                          # VSSBlock(128)
+p1_attention = p1
+# 没有 down_sample —— 最细级到此为止
+return p1, change_maps</code></pre>
+
+<h3>1.7 返回值组装（ChangeDecoder.py:165-167）</h3>
+<pre><code>change_maps = [p4_attention, p3_attention, p2_attention, p1_attention]
+return p1, change_maps</code></pre>
+<ul>
+  <li><code>p1</code>：<code>(B,128,H/4,W/4)</code>，交给 <code>STMambaSCD.main_clf_cd</code>（PyramidFusion 128→2）出二元变化图；</li>
+  <li><code>change_maps</code>：<b>粗→细</b>顺序的 4 张图，就是各级 VSSBlock 之后、下采样之前的那份融合特征。调用方 <code>STMambaSCD.py:149</code> 会做 <code>change_maps[::-1]</code> 反转成细→粗，再喂给 SemanticDecoder。</li>
+</ul>
+
+<div class="callout info"><b>★ change_maps 的物理意义</b>
+<code>p4_attention</code> 等是<b>双时相融合特征本身</b>，不是显式监督出来的分割图。它们之所以能当"变化先验"用，是因为生成路径里包含 <code>|pre−post|</code> 差分和 FFT 频域对比——变化区域在这些算子下响应强，融合特征值高。SemanticDecoder 拿它做 <code>sigmoid</code> 后就变成了天然的 (0,1) 空间注意力图。注意 <code>change_maps</code> 通道数与各级特征<b>天然等宽</b>（1024/512/256/128），这正是 CGA 能直接逐元素相乘、不需要投影卷积的前提。</div>
+</div>
+
+<div class="card">
+<h3>1.8 单级数据流总图（以 Stage II 为例）</h3>
+<pre><code>pre_feat_3 (B,512,H/16) ──┐
+                          ├─► fuse_layer_2 (JSF) ─► (B,512,H/16)
+post_feat_3 (B,512,H/16) ─┘                              │
+p4_prev (B,512,H/32) ─► interpolate↑2x ──────────────────┤ +  ← _upsample_add
+                                                         ▼
+                                              smooth_layer_3 (ResBlock+SE)
+                                                         ▼
+                                              st_block_31 (VSSBlock/SS2D)
+                                                         ▼
+                                              ┌─ p3_attention (存入 change_maps)
+                                              ▼
+                                     down_sample_2 (PyramidFusion 512→256)
+                                                         ▼
+                                          传给 Stage III 做 _upsample_add</code></pre>
+<p>一句话概括：<b>每级先"双时相合成"（JSF），再"接收上级先验"（上采样相加）、"去噪精修"（ResBlock+SE）、"时空建模"（Mamba SS2D），然后把建模后的特征一分为二——一份留作该级变化先验图，一份降通道传给更细一级</b>。四个 stage 从 1/32 一路走到 1/4，逐级把粗粒度的全局变化语义注入细粒度特征。</p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s2"><span class="num">2</span>encoder = Backbone_VSSM（独立解析）</h2>
+
+<p><b>定位</b>：从 VMamba 分类骨干改造来的多尺度特征提取器，T1/T2 共用同一份权重（forward 里各跑一遍）。</p>
+
+<div class="card">
+<h3>2.1 构造时做了什么（Mamba_backbone.py:24-48）</h3>
+<p>继承父类 <code>VSSM</code> 后做三处手术：</p>
+<ol>
+  <li><b>删分类头</b>：<code>del self.classifier</code>——父类末尾的 <code>norm→avgpool→Linear(→1000)</code> 整段扔掉，只留特征提取部分；</li>
+  <li><b>挂 4 个输出归一化层</b>：给 <code>out_indices=(0,1,2,3)</code> 每个 stage 加一个独立模块 <code>outnorm0~3</code>（默认 <code>ln2d</code> 配置下即 <code>LayerNorm2d(128/256/512/1024)</code>）；</li>
+  <li><b>加载预训练</b>：<code>load_pretrained</code> 用 <code>strict=False</code> 载入 VMamba 官方 ckpt（骨干层匹配的键生效，不匹配的分类头键自动忽略）。</li>
+</ol>
+<p>同时记录 <code>self.channel_first = True</code>（<code>ln2d</code> 配置）并暴露 <code>self.dims=[128,256,512,1024]</code>——下游所有解码器的通道配置都从这里取。</p>
+</div>
+
+<div class="card">
+<h3>2.2 stage 容器结构（父类提供）</h3>
+<p><code>self.layers[i]</code> 每个都是一个 OrderedDict 包的 Sequential：</p>
+<pre><code>nn.Sequential(OrderedDict(
+    blocks=nn.Sequential(*[VSSBlock×depths[i]]),  # 当前分辨率下的特征变换
+    downsample=conv_s2+norm 或 nn.Identity,        # 传给下一 stage 的降采样
+))</code></pre>
+</div>
+
+<div class="card">
+<h3>2.3 forward 逐级调用（Mamba_backbone.py:66-91）</h3>
+<p>本类<b>重写了 forward</b>，不复用父类的"一条道走到黑"（父类只输出最终特征），而是每个 stage 拆开取中间产物：</p>
+<pre><code>输入 x: (B,3,H,W)
+│
+├─ patch_embed（v2版：两层3x3卷积各stride=2）
+│     (B,3,H,W) → (B,128,H/4,W/4)        # 一次性把分辨率降到 1/4
+│
+├─ i=0: x = layers[0].blocks(x)          # VSSBlock×2 @ 1/4,  128ch
+│        y = layers[0].downsample(x)     # → 下一级输入 (B,256,H/8,W/8)
+│        outs.append(outnorm0(x))        # <span class="star">★</span> 收集的是 blocks 输出，不是 downsample 后的
+│
+├─ i=1: blocks @ 1/8, 256ch → downsample → (B,512,H/16,W/16)
+│        outs.append(outnorm1(x))
+│
+├─ i=2: blocks @ 1/16, 512ch → downsample → (B,1024,H/32,W/32)
+│        outs.append(outnorm2(x))
+│
+└─ i=3: blocks @ 1/32, 1024ch
+         downsample = nn.Identity（末级占位，白跑一次）
+         outs.append(outnorm3(x))
+
+返回 outs = [(B,128,H/4), (B,256,H/8), (B,512,H/16), (B,1024,H/32)]</code></pre>
+<p><code>layer_forward</code> 里的返回值分工（<code>Mamba_backbone.py:70-73</code>）值得注意：<code>x</code> 是 blocks 输出（被收集），<code>y</code> 是 downsample 输出（继续传）——<b>取的是下采样之前的特征</b>。</p>
+<p>最后一个兜底分支（<code>if not self.channel_first: out.permute(0,3,1,2)</code>）保证无论配置成 <code>ln</code>（channel-last）还是 <code>ln2d/bn</code>，输出永远是 <code>(B,C,H,W)</code>——这就是下游解码器不用操心布局的原因。</p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s3"><span class="num">3</span>decoder_T1 = SemanticDecoder（独立解析，decoder_T2 同构）</h2>
+
+<p><b>定位</b>：单一时相的语义分割解码器。T1、T2 两个实例<b>结构逐层相同、参数完全独立</b>，各自只看自己时相的编码特征。</p>
+
+<div class="card">
+<h3>3.1 构造时的零件清单（SemanticDecoder.py:33-99）</h3>
+<table>
+  <tr><th>组件</th><th>数量</th><th>配置</th></tr>
+  <tr><td>VSSBlock</td><td>4 个</td><td><code>st_block_4/3/2/1_semantic</code>，通道 1024/512/256/128，drop_path=0.1</td></tr>
+  <tr><td>PyramidFusion</td><td>3 个</td><td><code>down_sample_1/2/3</code>：1024→512、512→256、256→128</td></tr>
+  <tr><td>ResBlock</td><td>4 个</td><td><code>smooth_layer_3/2/1_semantic</code>（三级等宽）+ <b><code>smooth_layer_0_semantic(128)</code></b>（末级额外平滑）</td></tr>
+</table>
+<p>每个 VSSBlock 同样被 Permute/Identity 包裹（<code>channel_first=True</code> 时为恒等）。与 ChangeDecoder 的构造差异有两点：<b>没有 FFT_Fusion</b>（单时相不需要双时相融合），<b>多出一个 <code>smooth_layer_0_semantic</code></b>（最细级输出前的最后一段 128 通道平滑，对齐分类头的输入通道）。</p>
+</div>
+
+<div class="card">
+<h3>3.2 forward 入口拆包</h3>
+<pre><code>feat_1, feat_2, feat_3, feat_4 = features      # 本时相 4 级特征，细→粗 128/256/512/1024
+change_map_1, change_map_2, change_map_3, change_map_4 = change_maps   # 尺度一一对应</code></pre>
+</div>
+
+<div class="card">
+<h3>3.3 Stage I（1/32，1024 通道）—— 三步</h3>
+<p>四级共用同一条流水线，以最粗级为例：</p>
+<pre><code>p4 = feat_4                                     # 起点：原始编码特征 (B,1024,H/32,W/32)
+        │
+        ▼ ① CGA 变化引导（本级灵魂步骤）
+p4 = ChangeGuidedAttention()(feat_4, change_map_4)
+        # 无参数纯函数：attention = sigmoid(change_map_4)
+        # 输出 = feat_4 × attention —— 变化区保留、非变化区抑制
+        # 注意 change_map 与 feat_4 同为 1024 通道，故能逐元素直接乘
+        │
+        ▼ ② Mamba 时空建模
+p4 = st_block_4_semantic(p4)
+        # VSSBlock: x + DropPath(SS2D(norm(x))) + DropPath(MLP(norm2(x)))
+        │
+        ▼ ③ 通道降维（不改分辨率）
+p4 = down_sample_1(p4)      # PyramidFusion 1024→512，(B,512,H/32,W/32)</code></pre>
+</div>
+
+<div class="card">
+<h3>3.4 Stage II（1/16，512 通道）—— 完整五步</h3>
+<p>从这级起出现完整的"先验注入"步骤，顺序与 ChangeDecoder 略不同——<b>CGA 放在最前面</b>：</p>
+<pre><code>p3 = ChangeGuidedAttention()(feat_3, change_map_3)    # ① 先用变化图条件化
+p3 = _upsample_add(p4, p3)                            # ② 再注入粗先验
+        # p4 已是512ch → interpolate 到 H/16 → 与(被CGA处理过的)p3 相加
+p3 = smooth_layer_3_semantic(p3)                      # ③ ResBlock+SE 平滑
+p3 = st_block_3_semantic(p3)                          # ④ VSSBlock(512)
+p3 = down_sample_2(p3)                                # ⑤ 512→256</code></pre>
+<div class="callout info"><b>ℹ 与 ChangeDecoder 不一样的细节</b>
+<code>_upsample_add</code> 加的是<b>被 CGA 条件化过的 p3</b>，不是 feat_3 原始特征——变化引导的影响会顺着相加传播到后面每一级。</div>
+<p><b>Stage III / IV</b> 逐级复制同一模式：256ch → 128ch。最细级略有不同：</p>
+<pre><code>p1 = ChangeGuidedAttention()(feat_1, change_map_1)   # CGA @ 1/4, 128ch
+p1 = _upsample_add(p2, p1)                           # 注入先验
+p1 = smooth_layer_1_semantic(p1)                     # ResBlock(128)
+p1 = st_block_1_semantic(p1)                         # VSSBlock(128)
+p1 = smooth_layer_0_semantic(p1)                     # <span class="star">★</span> 多出的第五步：128ch 再平滑一次
+return p1                                            # (B,128,H/4,W/4)</code></pre>
+<p class="small"><code>_upsample_add</code> 与 ChangeDecoder 中是同一个双线性放大+相加实现（各文件里各有一份拷贝，代码重复）。</p>
+</div>
+
+<div class="card">
+<h3>3.5 三点独立说明</h3>
+<ul>
+  <li><code>CHANGE_GUIDED_ATTENTION</code> 是写死的 <code>True</code> 开关（<code>SemanticDecoder.py:37</code>），关掉就退化成普通语义分割解码器；</li>
+  <li>每级 <code>ChangeGuidedAttention()</code> 都是临时 new 的实例——它无参数无状态，等价于直接调 <code>feat * sigmoid(map)</code> 函数；</li>
+  <li><code>for_figs</code> 列表收集 CGA 后特征，是画图用的遗留代码，训练路径不消费它。</li>
+</ul>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s4"><span class="num">4</span>分类头 main_clf_cd / aux_clf = PyramidFusion（独立解析）</h2>
+
+<p><b>定位</b>：两个是<b>同一个类、同一种用法</b>的分类头，仅输出类别数不同。<code>aux_clf</code> 一份权重被 T1/T2 两次 forward 调用共用（权重共享是有意设计——两期地物分类体系相同）；<code>main_clf_cd</code> 只被 BCD 分支调用一次。</p>
+
+<div class="card">
+<h3>4.1 内部逐层调用（GuidedFusion.py:108-128）</h3>
+<p>与解码器里做"下采样融合"时是<b>同一个模块</b>，这里当分类头用时通道配置换成 <code>in=128, out=2 或 C</code>：</p>
+<pre><code>输入 x: (B,128,H/4,W/4)
+│
+├─ shortcut = Conv2d(128→out, 1x1)        # in≠out，残差捷径用 1x1 对齐通道
+│
+├─ b1 = Conv1x1(128→out)+BN+ReLU           # 分支1：逐像素
+├─ b3 = Conv3x3(128→out)+BN+ReLU           # 分支2：3x3 小感受野
+├─ b5 = DWConv5x5(128→128) → Conv1x1(→out)+BN+ReLU   # 分支3：5x5 深度可分离，大感受野
+│
+├─ cat[b1,b3,b5] → (B, 3·out, H/4, W/4)
+│
+├─ channel_att = ChannelAttention(3·out)
+│     # GAP+GMP → 共享两层FC(3·out → 3·out/16 → 3·out) → sigmoid → (B,3·out,1,1)
+│     weighted = cat × channel_weights
+│
+├─ spatial_att = SpatialAttention()
+│     # 通道维 mean+max → (B,2,h,w) → 7x7卷积 → sigmoid → (B,1,h,w)
+│     weighted = weighted × spatial_weights
+│
+├─ final_conv = Conv1x1(3·out→out)+BN+ReLU
+│
+└─ return final_conv(weighted) + shortcut(x)    # 残差相加
+输出: (B, out, H/4, W/4)</code></pre>
+</div>
+
+<div class="card">
+<h3>4.2 当分类头用时的三个独立性质</h3>
+<ol>
+  <li><b>不做任何分辨率变换</b>：PyramidFusion 的所有卷积都是 stride=1、padding 对齐，输出空间尺寸恒等于输入。所以两个头吐出的是 <b>1/4 分辨率的 logits</b>（<code>(B,2,H/4,W/4)</code> / <code>(B,C,H/4,W/4)</code>），放大回原图尺寸的动作发生在这层之外（STMambaSCD.forward 里的 <code>F.interpolate</code>），不属于头本身。</li>
+  <li><b>CBAM 序列是"先通道后空间"</b>，且空间注意力作用在已被通道加权后的特征上（串联加权，非并行）。</li>
+  <li><b>shortcut 分支包含可学习参数</b>：<code>in≠out</code> 时是 1×1 卷积而非恒等，意味着残差捷径本身也在参与"128 通道 → 类别 logits"的映射，与主分支输出直接相加。对 <code>main_clf_cd</code> 而言 shortcut 是 <code>Conv1x1(128→2)</code>——一个直接从特征线性投到 2 类的旁路。</li>
+</ol>
+<p>三层各自的职责：<b>encoder 负责"把一张图变成四级金字塔特征"，SemanticDecoder 负责"在变化图约束下把单时相特征精修成 128 维语义特征"，分类头负责"把 128 维特征线性加权成类别得分"。</b></p>
+</div>
+
+<!-- ================================================================ -->
+<h2 id="s5"><span class="num">5</span>值得注意的点（遗留代码与实现细节）</h2>
+
+<div class="card">
+<ol>
+  <li><b>调用链的"暗线"</b>：BCD 分支的产出 <code>change_maps</code> 是 SCD 分支的引导输入，<code>STMambaSCD.py:149</code> 的 <code>change_maps[::-1]</code> 反转是衔接关键——ChangeDecoder 按粗→细产出，SemanticDecoder 按细→粗消费。</li>
+  <li><b>遗留/未使用代码不少</b>：<code>MultiScaleChangeGuidedAttention</code> 和 <code>MultiScaleChangeGuidedAttention_StageByStage</code> 两个变体无任何模型引用；<code>FFT_Fusion</code> 里的 <code>CrossAttention</code> 定义了但 forward 没调用；<code>DepthwiseSeparableConv</code> 只被导入未使用；各文件顶部大量重复 import（os/time/fvcore 等）是沿用 VMamba 原仓库的遗留。</li>
+  <li><b>CGA 每级都 new 一个实例</b>（<code>SemanticDecoder.py:124</code> 等）：因为无参数，功能上等价于直接调函数，不影响正确性。</li>
+  <li><b>配套文档</b>：同目录下还有 <code>ARCHITECTURE.md</code>，可对照阅读更细的逐模块说明。</li>
+</ol>
+</div>
+
+<footer>Mamba-FCS · changedetection/models 结构解析 · 依据源码逐行整理</footer>
+</div>
+</body>
+</html>
